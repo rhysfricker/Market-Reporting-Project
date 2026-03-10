@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>G7 Weekly Market Report | Mar 09 – Mar 13, 2026</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=Source+Sans+3:wght@300;400;600&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+    --navy:#0d1b2a;--navy-mid:#112236;--navy-light:#1a3050;
+    --gold:#c9a84c;--gold-dim:rgba(201,168,76,0.12);
+    --text:#e8eaf0;--text-mid:#9ca3af;--text-dim:#5a6473;
+    --green:#2ecc71;--red:#e74c3c;--border:rgba(201,168,76,0.18);
+}
+body{background:var(--navy);color:var(--text);font-family:'Source Sans 3',sans-serif;font-weight:300;line-height:1.75}
+
+/* Header */
+.report-header{background:linear-gradient(160deg,#080f18 0%,#0f1e30 50%,#0d1b2a 100%);border-bottom:2px solid var(--gold);padding:70px 40px 55px;text-align:center;position:relative;overflow:hidden}
+.report-header::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse at 50% -20%,rgba(201,168,76,0.1) 0%,transparent 65%);pointer-events:none}
+.header-eyebrow{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:6px;color:var(--gold);text-transform:uppercase;margin-bottom:22px}
+.report-title{font-family:'Playfair Display',serif;font-size:clamp(36px,6vw,64px);font-weight:900;color:var(--text);letter-spacing:-1px;line-height:1.05;margin-bottom:18px}
+.report-title span{color:var(--gold)}
+.report-dates{font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--gold);letter-spacing:3px;margin-bottom:24px}
+.report-disclaimer{font-size:12px;color:var(--text-dim);max-width:560px;margin:0 auto;font-style:italic;line-height:1.6}
+
+/* Layout */
+.container{max-width:1160px;margin:0 auto;padding:0 28px}
+.section{padding:64px 0;border-bottom:1px solid var(--border)}
+.section-eyebrow{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:5px;color:var(--gold);text-transform:uppercase;margin-bottom:10px;opacity:.8}
+.section-title{font-family:'Playfair Display',serif;font-size:clamp(24px,3.5vw,36px);font-weight:700;color:var(--text);margin-bottom:6px;line-height:1.2}
+.section-rule{width:48px;height:2px;background:var(--gold);margin:18px 0 34px;opacity:.5}
+
+/* Exec box */
+.exec-box{background:linear-gradient(135deg,var(--navy-mid),#16293f);border:1px solid var(--border);border-left:3px solid var(--gold);border-radius:3px;padding:30px 36px;font-size:16px;line-height:1.85;color:var(--text)}
+.exec-box p{margin-bottom:14px}
+.exec-box p:last-child{margin-bottom:0}
+
+/* Narrative */
+.narrative p{font-size:15px;line-height:1.85;color:var(--text-mid);margin-bottom:18px}
+.narrative p:last-child{margin-bottom:0}
+
+/* Charts */
+.charts-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin:12px 0 0}
+.chart-card{background:var(--navy-mid);border:1px solid var(--border);border-radius:4px;overflow:hidden}
+.chart-card img{width:100%;display:block;max-height:280px;object-fit:contain}
+.chart-caption{font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--gold);padding:7px 14px;letter-spacing:1.5px;border-top:1px solid var(--border);text-transform:uppercase}
+.chart-region{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:4px;color:var(--text-dim);text-transform:uppercase;margin:24px 0 10px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+.chart-group{margin-bottom:6px}
+
+/* Bias table */
+.bias-wrap{overflow-x:auto;margin-top:8px}
+.bias-table{width:100%;border-collapse:collapse;font-size:13px}
+.bias-table th{font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--gold);text-transform:uppercase;letter-spacing:1.5px;padding:12px 14px;border-bottom:1px solid var(--border);text-align:left;background:var(--navy-mid);white-space:nowrap}
+.bias-table td{padding:11px 14px;border-bottom:1px solid rgba(255,255,255,0.035);color:var(--text-mid);vertical-align:middle}
+.bias-table tr:hover td{background:rgba(201,168,76,0.03)}
+.bias-table td:first-child{color:var(--text);font-weight:600}
+
+/* Events */
+.events-table{width:100%;border-collapse:collapse;font-size:14px;margin-top:24px}
+.events-table th{font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:2px;padding:10px 16px;border-bottom:1px solid var(--border);text-align:left}
+.events-table td{padding:13px 16px;border-bottom:1px solid rgba(255,255,255,0.04);color:var(--text-mid)}
+.events-table td:first-child{font-family:'IBM Plex Mono',monospace;color:var(--gold);font-size:12px;white-space:nowrap}
+
+/* Footer */
+.report-footer{background:var(--navy-mid);border-top:1px solid var(--border);padding:44px 40px;text-align:center;font-size:12px;color:var(--text-dim);line-height:2}
+.report-footer strong{color:var(--gold)}
+
+/* ── Print Styles ───────────────────────────────────────────
+   GOLDEN RULES:
+   1. ONLY apply page-break-inside:avoid to genuinely small elements
+      (single table row, single chart card). Never to sections,
+      narratives, grids or any container taller than ~200px.
+   2. Crush ALL padding/margin in print — the 64px screen padding
+      is the #1 cause of gaps and phantom blank pages.
+   3. print-color-adjust:exact is mandatory — without it Chrome
+      strips dark backgrounds leaving white voids.
+   4. chart-group must NEVER have avoid — even 2-chart groups can
+      exceed the page height with padding included.
+─────────────────────────────────────────────────────────── */
+@media print {
+    @page { margin: 10mm 10mm; }
+
+    body {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+
+    /* ── Kill all padding/margin that creates phantom gaps ── */
+    .section {
+        padding: 12px 0 !important;
+        margin: 0 !important;
+        border-bottom: 1px solid var(--border);
+        page-break-inside: auto;
+        break-inside: auto;
+    }
+    .section-rule  { margin: 8px 0 14px !important; }
+    .chart-region  { margin: 10px 0 6px !important; }
+    .chart-group   { margin-bottom: 4px !important; }
+    .charts-grid   { margin: 4px 0 0 !important; gap: 6px !important; }
+    .narrative p   { margin-bottom: 10px !important; }
+    .exec-box      { padding: 16px 20px !important; }
+
+    /* ── Headings: keep eyebrow+title+rule together ── */
+    .section-eyebrow { page-break-after: avoid; break-after: avoid; }
+    .section-title   { page-break-after: avoid; break-after: avoid; }
+    .section-rule    { page-break-after: avoid; break-after: avoid; }
+
+    /* ── Content containers: always auto (allow breaking) ── */
+    .exec-box      { page-break-inside: avoid; break-inside: avoid; }
+    .narrative     { page-break-inside: auto;  break-inside: auto; }
+    .chart-group   { page-break-inside: auto;  break-inside: auto; }
+    .charts-grid   { page-break-inside: auto;  break-inside: auto; }
+
+    /* ── Atomic units only: keep these together ── */
+    .chart-card         { page-break-inside: avoid; break-inside: avoid; }
+    .bias-table tr      { page-break-inside: avoid; break-inside: avoid; }
+    .events-table tr    { page-break-inside: avoid; break-inside: avoid; }
+
+    /* ── Tables: repeat header, allow body to break ── */
+    .bias-wrap      { page-break-inside: auto; break-inside: auto; overflow: visible; }
+    .bias-table     { page-break-inside: auto; }
+    .bias-table thead { display: table-header-group; }
+    .events-table   { page-break-inside: auto; }
+
+    /* ── Prevent report header taking whole first page ── */
+    .report-header { padding: 20px 20px 16px !important; }
+    .report-title  { font-size: 36px !important; margin-bottom: 8px !important; }
+    .report-dates  { margin-bottom: 10px !important; }
+}
+
+@media(max-width:768px){
+    .report-header{padding:44px 20px}
+    .section{padding:44px 0}
+    .exec-box{padding:22px 20px;font-size:15px}
+    .charts-grid{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+
+<div class="report-header">
+    <div class="header-eyebrow">G7 Markets · Weekly Intelligence Report</div>
+    <h1 class="report-title">Weekly <span>Market</span> Report</h1>
+    <div class="report-dates">Mar 09 – Mar 13, 2026</div>
+    <p class="report-disclaimer">
+        For educational and informational purposes only. Not financial advice.<br>
+        Data: FRED API · CNBC · BBC News · Yahoo Finance · Generated 10 March 2026
+    </p>
+</div>
+
+<div class="container">
+
+<div class="section">
+    <div class="section-eyebrow">Overview</div>
+    <h2 class="section-title">Executive Summary</h2>
+    <div class="section-rule"></div>
+    <div class="exec-box"><p>Oil prices surged 18% this week amid escalating tensions between the U.S. and Iran, with crude hitting $100 per barrel and sparking fears of 1970s-style stagflation as the conflict began hitting consumers' pocketbooks. Stock markets remained relatively calm with the S&P 500 flat and the Nasdaq gaining 1.4%, but a shocking jobs report showing 92,000 payrolls lost in February and unemployment rising to 4.4% complicated the Federal Reserve's interest rate decisions according to San Francisco Fed President Daly. Gold climbed 1.7% as investors sought safe-haven assets amid the dual uncertainties of geopolitical conflict and a weakening labor market. The biggest risk next week is whether oil prices continue climbing if Middle East tensions escalate further, potentially forcing the Fed to choose between fighting inflation or supporting a slowing economy.</p></div>
+</div>
+
+<div class="section">
+    <div class="section-eyebrow">United States</div>
+    <h2 class="section-title">🇺🇸 US Economy & Markets</h2>
+    <div class="section-rule"></div>
+    <div class="narrative"><p>The February jobs report delivered a shock to markets when U.S. payrolls unexpectedly fell by 92,000 while the unemployment rate climbed to 4.4%. Treasury bonds rallied sharply as investors suddenly saw a much higher chance of Federal Reserve rate cuts, pushing the 10-year yield down from recent highs. As San Francisco Fed's Daly noted, the jobs report complicated the interest rate outlook, since weak employment data typically signals the Fed might ease policy faster than previously expected.</p><p>Oil prices spiked toward $100 per barrel amid escalating Middle East tensions, raising fears of 1970s-style stagflation where economic growth stagnates while prices rise. Energy stocks surged while broader market sectors struggled with the prospect of higher costs eating into profits and consumer spending. The combination of higher energy prices and geopolitical uncertainty left investors weighing whether this oil shock could derail the economic recovery and force the Fed into a difficult position.</p><p>Stock markets reflected this mixed picture, with the Nasdaq gaining 1.4% as investors rotated into growth stocks that might benefit from lower interest rates, while the Dow fell 1.3% as traditional industrial and financial stocks bore the brunt of economic uncertainty. The dollar weakened 0.4% as rate cut expectations grew following the jobs miss, making U.S. assets relatively less attractive to foreign investors.</p><p>Watch next week for any Fed officials' comments on how they're interpreting the conflicting signals of weak jobs data versus rising oil prices.</p></div>
+</div>
+
+<div class="section">
+    <div class="section-eyebrow">Europe & United Kingdom</div>
+    <h2 class="section-title">🇪🇺 Europe & UK Economy & Markets</h2>
+    <div class="section-rule"></div>
+    <div class="narrative"><p>Europe & UK Markets</p><p>European stocks posted modest gains this week as energy concerns dominated trading sentiment. The DAX climbed 0.52% while the broader EuroStoxx index rose nearly 1%, with investors initially worried about potential gas price shocks from escalating Middle East tensions. However, markets found some relief after President Trump's comments suggesting the Iran conflict was "very complete," which helped ease fears about prolonged energy supply disruptions. The euro strengthened 0.26% against the dollar as traders reassessed geopolitical risks.</p><p>UK markets moved in the opposite direction, with the FTSE 100 falling 0.7% despite sterling gaining 0.76% against the dollar. British stocks faced pressure from concerns about higher energy costs, particularly after reports highlighted how Iran-related conflicts could impact heating bills for UK consumers. Chancellor Reeves' pledge to explore helping with heating oil bills underscored the government's recognition of potential energy cost pressures facing households. The pound's strength came despite these domestic concerns, benefiting from broader dollar weakness.</p><p>Energy sectors across both regions remained volatile throughout the week as oil prices swung on conflicting signals about Middle East supply risks. European energy companies particularly felt the impact as analysts warned that gas-dependent industries could face the hardest hit from any prolonged regional conflict. The mixed performance between UK and European equity markets reflected different exposures to energy costs and geopolitical risks.</p><p>Next week, watch for any further developments in Middle East tensions and their impact on European energy prices.</p></div>
+</div>
+
+<div class="section">
+    <div class="section-eyebrow">Japan</div>
+    <h2 class="section-title">🇯🇵 Japan Economy & Markets</h2>
+    <div class="section-rule"></div>
+    <div class="narrative"><p>The Bank of Japan held its policy rate steady at 0.73% this week, disappointing some investors who had expected further tightening to combat inflation running at 2.74%. This dovish stance weakened the yen slightly by 0.09% as traders pushed back expectations for aggressive rate hikes that would make yen carry trades (where investors borrow cheap yen to invest elsewhere) less attractive. Meanwhile, geopolitical tensions in the Middle East initially spooked global markets, but President Trump's comments suggesting Iran war might end "soon" helped ease oil price concerns that had been weighing on export-dependent Japanese companies.</p><p>The Nikkei fell 0.39% for the week as investors remained cautious about the central bank's gradual approach to monetary tightening. While higher rates would typically strengthen the yen and reduce inflationary pressures, they could also unwind popular carry trades where global investors borrow yen cheaply to fund investments in higher-yielding assets worldwide, potentially causing broader market disruption.</p><p>Next week, watch for any additional commentary from BoJ officials about their timeline for future rate increases.</p></div>
+</div>
+
+<div class="section">
+    <div class="section-eyebrow">Commodities</div>
+    <h2 class="section-title">⚡ Commodities</h2>
+    <div class="section-rule"></div>
+    <div class="narrative"><p>Oil prices surged dramatically this week, jumping over 18% to $88 per barrel, after escalating tensions in the Middle East sparked fears about global energy supplies. The G7 moved quickly to announce they would take "necessary measures" to support energy supplies, but this only highlighted how serious the disruption could be. However, prices pulled back somewhat after Trump suggested the Iran conflict was "very complete," easing immediate supply concerns and preventing petrol prices from climbing even higher at the pump.</p><p>Precious metals also gained ground as investors sought safe havens during the geopolitical turmoil. Gold climbed nearly 2% to over $5,190 per ounce, while silver shot up almost 8% to $89 — both reflecting the classic flight to safety when global tensions rise and people worry about their savings losing value in traditional investments. These moves show how quickly commodity markets react when major oil-producing regions face conflict, directly affecting everything from heating bills to grocery prices as transport costs fluctuate.</p><p>Next week, watch whether oil prices stabilize or spike again depending on any fresh developments in Middle Eastern tensions.</p></div>
+</div>
+
+<div class="section">
+    <div class="section-eyebrow">Technical Analysis</div>
+    <h2 class="section-title">📈 Technical Analysis</h2>
+    <div class="section-rule"></div>
+    <div class="narrative"><p>Most major markets stayed locked in neutral territory this week, with RSI readings (a momentum indicator that ranges from 0-100) clustering between 40-60 across stocks, currencies and bonds. The S&P 500 barely moved at 6824 with an RSI of 45.2, while the Nasdaq gained 1.41% but remained neutral with an RSI just under 50. European markets like the DAX and Euro Stoxx 50 posted modest gains but similarly neutral technical pictures.</p><p>The week's most striking signals came from commodities and the Dow Jones. Silver surged 7.81% to reach an RSI of 55.2, showing strong bullish momentum, while crude oil exploded 18.16% higher and hit an overbought RSI of 74.0 - suggesting prices may pull back after such a dramatic run. On the downside, the Dow Jones fell 1.33% and dropped to an RSI of 38.3, putting it close to oversold territory where a bounce typically becomes more likely.</p><p>Next week's charts suggest commodities remain the strongest sector, with silver's bullish bias intact and oil potentially due for a breather after hitting overbought levels. The Dow's weakness stands out against other major indices and could see some relief if its RSI drops closer to 30. Watch whether the broad market neutrality continues or if momentum shifts decisively in either direction, particularly around current support and resistance levels for the S&P 500 near 6800.</p></div>
+
+    <div class="chart-group">
+        <div class="chart-region">United States</div>
+        <div class="charts-grid"><div class="chart-card">
+        <img src="http://localhost:8765/charts/ES_F_chart.png" alt="S&P 500 chart" loading="eager">
+        <div class="chart-caption">S&P 500 — Daily Chart</div>
+    </div><div class="chart-card">
+        <img src="http://localhost:8765/charts/NQ_F_chart.png" alt="Nasdaq chart" loading="eager">
+        <div class="chart-caption">Nasdaq — Daily Chart</div>
+    </div><div class="chart-card">
+        <img src="http://localhost:8765/charts/YM_F_chart.png" alt="Dow Jones chart" loading="eager">
+        <div class="chart-caption">Dow Jones — Daily Chart</div>
+    </div><div class="chart-card">
+        <img src="http://localhost:8765/charts/DX-Y.NYB_chart.png" alt="Dollar Index chart" loading="eager">
+        <div class="chart-caption">Dollar Index — Daily Chart</div>
+    </div></div>
+    </div>
+
+    <div class="chart-group">
+        <div class="chart-region">Europe & United Kingdom</div>
+        <div class="charts-grid"><div class="chart-card">
+        <img src="http://localhost:8765/charts/GDAXI_chart.png" alt="DAX chart" loading="eager">
+        <div class="chart-caption">DAX — Daily Chart</div>
+    </div><div class="chart-card">
+        <img src="http://localhost:8765/charts/FTSE_chart.png" alt="FTSE 100 chart" loading="eager">
+        <div class="chart-caption">FTSE 100 — Daily Chart</div>
+    </div><div class="chart-card">
+        <img src="http://localhost:8765/charts/STOXX50E_chart.png" alt="Euro Stoxx 50 chart" loading="eager">
+        <div class="chart-caption">Euro Stoxx 50 — Daily Chart</div>
+    </div><div class="chart-card">
+        <img src="http://localhost:8765/charts/6E_F_chart.png" alt="Euro chart" loading="eager">
+        <div class="chart-caption">Euro — Daily Chart</div>
+    </div><div class="chart-card">
+        <img src="http://localhost:8765/charts/6B_F_chart.png" alt="Sterling chart" loading="eager">
+        <div class="chart-caption">Sterling — Daily Chart</div>
+    </div></div>
+    </div>
+
+    <div class="chart-group">
+        <div class="chart-region">Japan</div>
+        <div class="charts-grid"><div class="chart-card">
+        <img src="http://localhost:8765/charts/NKD_F_chart.png" alt="Nikkei chart" loading="eager">
+        <div class="chart-caption">Nikkei — Daily Chart</div>
+    </div><div class="chart-card">
+        <img src="http://localhost:8765/charts/6J_F_chart.png" alt="Japanese Yen chart" loading="eager">
+        <div class="chart-caption">Japanese Yen — Daily Chart</div>
+    </div></div>
+    </div>
+
+    <div class="chart-group">
+        <div class="chart-region">Commodities</div>
+        <div class="charts-grid"><div class="chart-card">
+        <img src="http://localhost:8765/charts/GC_F_chart.png" alt="Gold chart" loading="eager">
+        <div class="chart-caption">Gold — Daily Chart</div>
+    </div><div class="chart-card">
+        <img src="http://localhost:8765/charts/SI_F_chart.png" alt="Silver chart" loading="eager">
+        <div class="chart-caption">Silver — Daily Chart</div>
+    </div><div class="chart-card">
+        <img src="http://localhost:8765/charts/CL_F_chart.png" alt="Crude Oil chart" loading="eager">
+        <div class="chart-caption">Crude Oil — Daily Chart</div>
+    </div></div>
+    </div>
+</div>
+
+<div class="section">
+    <div class="section-eyebrow">Market Summary</div>
+    <h2 class="section-title">📊 Trader's Bias Summary</h2>
+    <div class="section-rule"></div>
+    <div class="bias-wrap">
+        <table class="bias-table">
+            <thead><tr>
+                <th>Instrument</th><th>Price</th><th>Week %</th>
+                <th>RSI</th><th>Trend</th><th>Bias</th><th>Key Levels (S1 / R1)</th>
+            </tr></thead>
+            <tbody><tr>
+            <td><strong>S&P500</strong></td>
+            <td style="font-family:'IBM Plex Mono',monospace">6824.00</td>
+            <td style="color:#e74c3c;font-family:'IBM Plex Mono',monospace">-0.01%</td>
+            <td style="font-family:'IBM Plex Mono',monospace">45.2</td>
+            <td>Above 200 SMA</td>
+            <td>🟡 Neutral</td>
+            <td style="font-family:'IBM Plex Mono',monospace;font-size:12px">S1: 6650.83 / R1: 6884.83</td>
+        </tr><tr>
+            <td><strong>Nasdaq</strong></td>
+            <td style="font-family:'IBM Plex Mono',monospace">25105.00</td>
+            <td style="color:#2ecc71;font-family:'IBM Plex Mono',monospace">+1.41%</td>
+            <td style="font-family:'IBM Plex Mono',monospace">49.9</td>
+            <td>Above 200 SMA</td>
+            <td>🟡 Neutral</td>
+            <td style="font-family:'IBM Plex Mono',monospace;font-size:12px">S1: 24308.00 / R1: 25366.00</td>
+        </tr><tr>
+            <td><strong>Dollar Index</strong></td>
+            <td style="font-family:'IBM Plex Mono',monospace">98.65</td>
+            <td style="color:#e74c3c;font-family:'IBM Plex Mono',monospace">-0.4%</td>
+            <td style="font-family:'IBM Plex Mono',monospace">55.9</td>
+            <td>Above 200 SMA</td>
+            <td>🟡 Neutral</td>
+            <td style="font-family:'IBM Plex Mono',monospace;font-size:12px">S1: 98.70 / R1: 99.68</td>
+        </tr><tr>
+            <td><strong>Dow Jones</strong></td>
+            <td style="font-family:'IBM Plex Mono',monospace">47914.00</td>
+            <td style="color:#e74c3c;font-family:'IBM Plex Mono',monospace">-1.33%</td>
+            <td style="font-family:'IBM Plex Mono',monospace">38.3</td>
+            <td>Above 200 SMA</td>
+            <td>🔴 Bearish</td>
+            <td style="font-family:'IBM Plex Mono',monospace;font-size:12px">S1: 46760.33 / R1: 48350.33</td>
+        </tr><tr>
+            <td><strong>DAX</strong></td>
+            <td style="font-family:'IBM Plex Mono',monospace">23914.37</td>
+            <td style="color:#2ecc71;font-family:'IBM Plex Mono',monospace">+0.52%</td>
+            <td style="font-family:'IBM Plex Mono',monospace">41.2</td>
+            <td>Below 200 SMA</td>
+            <td>🟡 Neutral</td>
+            <td style="font-family:'IBM Plex Mono',monospace;font-size:12px">S1: 23067.68 / R1: 23610.93</td>
+        </tr><tr>
+            <td><strong>FTSE100</strong></td>
+            <td style="font-family:'IBM Plex Mono',monospace">10411.15</td>
+            <td style="color:#e74c3c;font-family:'IBM Plex Mono',monospace">-0.7%</td>
+            <td style="font-family:'IBM Plex Mono',monospace">47.5</td>
+            <td>Above 200 SMA</td>
+            <td>🟡 Neutral</td>
+            <td style="font-family:'IBM Plex Mono',monospace;font-size:12px">S1: 10126.00 / R1: 10329.00</td>
+        </tr><tr>
+            <td><strong>Euro Stoxx50</strong></td>
+            <td style="font-family:'IBM Plex Mono',monospace">5828.89</td>
+            <td style="color:#2ecc71;font-family:'IBM Plex Mono',monospace">+0.99%</td>
+            <td style="font-family:'IBM Plex Mono',monospace">43.4</td>
+            <td>Above 200 SMA</td>
+            <td>🟡 Neutral</td>
+            <td style="font-family:'IBM Plex Mono',monospace;font-size:12px">S1: 5588.03 / R1: 5737.75</td>
+        </tr><tr>
+            <td><strong>Nikkei</strong></td>
+            <td style="font-family:'IBM Plex Mono',monospace">55125.00</td>
+            <td style="color:#e74c3c;font-family:'IBM Plex Mono',monospace">-0.39%</td>
+            <td style="font-family:'IBM Plex Mono',monospace">46.6</td>
+            <td>Above 200 SMA</td>
+            <td>🟡 Neutral</td>
+            <td style="font-family:'IBM Plex Mono',monospace;font-size:12px">S1: 52268.33 / R1: 55983.33</td>
+        </tr><tr>
+            <td><strong>Yen</strong></td>
+            <td style="font-family:'IBM Plex Mono',monospace">0.006344</td>
+            <td style="color:#e74c3c;font-family:'IBM Plex Mono',monospace">-0.09%</td>
+            <td style="font-family:'IBM Plex Mono',monospace">40.9</td>
+            <td>Below 200 SMA</td>
+            <td>🟡 Neutral</td>
+            <td style="font-family:'IBM Plex Mono',monospace;font-size:12px">S1: 0.006293 / R1: 0.006344</td>
+        </tr><tr>
+            <td><strong>Sterling</strong></td>
+            <td style="font-family:'IBM Plex Mono',monospace">1.3457</td>
+            <td style="color:#2ecc71;font-family:'IBM Plex Mono',monospace">+0.76%</td>
+            <td style="font-family:'IBM Plex Mono',monospace">47.8</td>
+            <td>Above 200 SMA</td>
+            <td>🟡 Neutral</td>
+            <td style="font-family:'IBM Plex Mono',monospace;font-size:12px">S1: 1.3296 / R1: 1.3460</td>
+        </tr><tr>
+            <td><strong>Euro</strong></td>
+            <td style="font-family:'IBM Plex Mono',monospace">1.1650</td>
+            <td style="color:#2ecc71;font-family:'IBM Plex Mono',monospace">+0.26%</td>
+            <td style="font-family:'IBM Plex Mono',monospace">41.6</td>
+            <td>Below 200 SMA</td>
+            <td>🟡 Neutral</td>
+            <td style="font-family:'IBM Plex Mono',monospace;font-size:12px">S1: 1.1514 / R1: 1.1644</td>
+        </tr><tr>
+            <td><strong>Gold</strong></td>
+            <td style="font-family:'IBM Plex Mono',monospace">5193.30</td>
+            <td style="color:#2ecc71;font-family:'IBM Plex Mono',monospace">+1.68%</td>
+            <td style="font-family:'IBM Plex Mono',monospace">57.1</td>
+            <td>Above 200 SMA</td>
+            <td>🟡 Neutral</td>
+            <td style="font-family:'IBM Plex Mono',monospace;font-size:12px">S1: 5059.27 / R1: 5142.17</td>
+        </tr><tr>
+            <td><strong>Silver</strong></td>
+            <td style="font-family:'IBM Plex Mono',monospace">89.40</td>
+            <td style="color:#2ecc71;font-family:'IBM Plex Mono',monospace">+7.81%</td>
+            <td style="font-family:'IBM Plex Mono',monospace">55.2</td>
+            <td>Above 200 SMA</td>
+            <td>🟢 Bullish</td>
+            <td style="font-family:'IBM Plex Mono',monospace;font-size:12px">S1: 80.18 / R1: 87.19</td>
+        </tr><tr>
+            <td><strong>Crude Oil</strong></td>
+            <td style="font-family:'IBM Plex Mono',monospace">88.10</td>
+            <td style="color:#2ecc71;font-family:'IBM Plex Mono',monospace">+18.16%</td>
+            <td style="font-family:'IBM Plex Mono',monospace">74.0</td>
+            <td>Above 200 SMA</td>
+            <td>🟢 Bullish</td>
+            <td style="font-family:'IBM Plex Mono',monospace;font-size:12px">S1: 77.48 / R1: 115.77</td>
+        </tr></tbody>
+        </table>
+    </div>
+</div>
+
+<div class="section">
+    <div class="section-eyebrow">Looking Ahead</div>
+    <h2 class="section-title">📅 Key Events Next Week</h2>
+    <div class="section-rule"></div>
+    <table class="events-table">
+        <thead><tr><th>Day</th><th>Event</th><th>Impact</th></tr></thead>
+        <tbody><tr>
+            <td>Monday</td>
+            <td>US ISM Services PMI</td>
+            <td><span style="color:#c9a84c;font-weight:600">Medium</span></td>
+        </tr><tr>
+            <td>Tuesday</td>
+            <td>UK Unemployment & Wage Data</td>
+            <td><span style="color:#e74c3c;font-weight:600">High</span></td>
+        </tr><tr>
+            <td>Wednesday</td>
+            <td>US CPI Inflation Release</td>
+            <td><span style="color:#e74c3c;font-weight:600">High</span></td>
+        </tr><tr>
+            <td>Wednesday</td>
+            <td>FOMC Meeting Minutes</td>
+            <td><span style="color:#e74c3c;font-weight:600">High</span></td>
+        </tr><tr>
+            <td>Thursday</td>
+            <td>ECB Interest Rate Decision</td>
+            <td><span style="color:#e74c3c;font-weight:600">High</span></td>
+        </tr><tr>
+            <td>Thursday</td>
+            <td>US Initial Jobless Claims</td>
+            <td><span style="color:#c9a84c;font-weight:600">Medium</span></td>
+        </tr><tr>
+            <td>Friday</td>
+            <td>UK GDP Monthly Estimate</td>
+            <td><span style="color:#c9a84c;font-weight:600">Medium</span></td>
+        </tr><tr>
+            <td>Friday</td>
+            <td>US University of Michigan Sentiment</td>
+            <td><span style="color:#c9a84c;font-weight:600">Medium</span></td>
+        </tr></tbody>
+    </table>
+</div>
+
+</div>
+
+<div class="report-footer">
+    <strong>G7 Weekly Market Report</strong> · Mar 09 – Mar 13, 2026<br>
+    Data: FRED API · CNBC · BBC News · Yahoo Finance<br>
+    Auto-generated for educational purposes only. Not financial advice.<br>
+    Built with Python · Open source on GitHub
+</div>
+
+</body>
+</html>

@@ -1,0 +1,11 @@
+pandas
+yfinance
+ta
+requests
+beautifulsoup4
+mplfinance
+matplotlib
+numpy
+fredapi
+certifi
+python-dotenv
