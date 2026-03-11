@@ -19,6 +19,7 @@ from indicators import calculate_indicators, calculate_pivot_points, format_pric
 from macro_data import fetch_all_macro
 from news_data import fetch_all_news, get_top_headlines
 from config import instruments
+from calendar_data import get_economic_calendar
 import ssl
 import certifi
 ssl._create_default_https_context = lambda: ssl.create_default_context(cafile=certifi.where())
@@ -426,23 +427,20 @@ def bias_row(inst, all_data):
 
 # ── HTML: Events Calendar ─────────────────────────────────────
 def events_html():
-    events = [
-        ("Monday",    "US ISM Services PMI",                "Medium"),
-        ("Tuesday",   "UK Unemployment & Wage Data",         "High"),
-        ("Wednesday", "US CPI Inflation Release",            "High"),
-        ("Wednesday", "FOMC Meeting Minutes",                "High"),
-        ("Thursday",  "ECB Interest Rate Decision",          "High"),
-        ("Thursday",  "US Initial Jobless Claims",           "Medium"),
-        ("Friday",    "UK GDP Monthly Estimate",             "Medium"),
-        ("Friday",    "US University of Michigan Sentiment", "Medium"),
-    ]
+    events = get_economic_calendar()
     rows = ""
-    for day, event, impact in events:
-        col = "#e74c3c" if impact == "High" else "#c9a84c"
+    for ev in events:
+        impact_col = "#e74c3c" if ev["impact"] == "High" else "#c9a84c"
+        forecast   = ev.get("forecast", "—")
+        previous   = ev.get("previous", "—")
         rows += f"""<tr>
-            <td>{day}</td>
-            <td>{event}</td>
-            <td><span style="color:{col};font-weight:600">{impact}</span></td>
+            <td>{ev['date']}</td>
+            <td style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--gold)">{ev['time']}</td>
+            <td>{ev['currency_label']}</td>
+            <td>{ev['event']}</td>
+            <td><span style="color:{impact_col};font-weight:600">{ev['impact']}</span></td>
+            <td style="font-family:'IBM Plex Mono',monospace;font-size:12px">{forecast}</td>
+            <td style="font-family:'IBM Plex Mono',monospace;font-size:12px">{previous}</td>
         </tr>"""
     return rows
 
@@ -752,7 +750,11 @@ body{{background:var(--navy);color:var(--text);font-family:'Source Sans 3',sans-
     <h2 class="section-title">📅 Key Events Next Week</h2>
     <div class="section-rule"></div>
     <table class="events-table">
-        <thead><tr><th>Day</th><th>Event</th><th>Impact</th></tr></thead>
+    <thead><tr>
+        <th>Day</th><th>Time</th><th>Currency</th>
+        <th>Event</th><th>Impact</th><th>Forecast</th><th>Previous</th>
+    </tr></thead>
+        
         <tbody>{events_html()}</tbody>
     </table>
 </div>
