@@ -6,6 +6,7 @@
 # ============================================================
 
 # ── Imports ─────────────────────────────────────────────────
+import os
 from fredapi import Fred
 import pandas as pd
 import ssl
@@ -15,7 +16,9 @@ ssl._create_default_https_context = lambda: ssl.create_default_context(cafile=ce
 # ── API Key ──────────────────────────────────────────────────
 # Replace with your FRED API key from:
 # https://fred.stlouisfed.org/docs/api/api_key.html
-FRED_API_KEY = "ef49622bd404230da07b44426287bda5"
+from dotenv import load_dotenv
+load_dotenv()
+FRED_API_KEY = os.getenv("FRED_API_KEY")
 fred = Fred(api_key=FRED_API_KEY)
 
 
