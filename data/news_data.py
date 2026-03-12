@@ -1,150 +1,246 @@
 # ============================================================
 # news_data.py
-# Pulls headline news from CNBC and BBC RSS feeds
+# Pulls headline news from CNBC, BBC, and Reuters RSS feeds
 # No API key required — free and open source friendly
 # Used by report.py to populate the news/events section
+#
+# Feed categories and what they drive in the report:
+#   GEOPOLITICAL  → all sections (wars, sanctions, crises)
+#   BREAKING      → all sections (major world events)
+#   SUPPLY/DEMAND → commodities (oil supply, OPEC, shipping)
+#   EARNINGS      → equities (company results, guidance)
+#   RATES/CBanks  → currencies (Fed, ECB, BoE, BoJ decisions)
+#   REGIONAL      → the relevant geographic section
 # ============================================================
-
+ 
 # ── Imports ─────────────────────────────────────────────────
 import requests
 import xml.etree.ElementTree as ET
 from datetime import datetime
 import certifi
-
-
-# ── News Feed Configuration ──────────────────────────────────
-# Two sources combined for maximum coverage:
-#   CNBC — markets, earnings, Fed, macro, regional markets
-#   BBC  — geopolitical, breaking news, world business
-# All feeds are free RSS — no API key or signup required
-# Ideal for open source / public GitHub distribution
-MAX_HEADLINES = 5
-
+ 
+ 
+# ── Feed Configuration ───────────────────────────────────────
+# MAX_HEADLINES per feed. Geopolitical/Breaking fetch more
+# because a single major event can affect every section.
+MAX_HEADLINES_DEFAULT     = 5
+MAX_HEADLINES_GEOPOLITICAL = 8   # Wars, sanctions, crises affect every market
+MAX_HEADLINES_BREAKING     = 8   # Same — major world events permeate everything
+ 
 FEEDS = {
-    # ── CNBC Feeds ───────────────────────────────────────────
-    "Markets":        "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258",
-    "Business":       "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10001147",
-    "US Economy":     "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839069",
-    "Europe Markets": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=19794221",
-    "Asia Markets":   "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=19832390",
-
-    # ── BBC Feeds ────────────────────────────────────────────
-    "Geopolitical":   "https://feeds.bbci.co.uk/news/world/rss.xml",
-    "Breaking News":  "https://feeds.bbci.co.uk/news/rss.xml",
-    "World Business": "https://feeds.bbci.co.uk/news/business/rss.xml",
+    # ── CNBC Regional / Macro ────────────────────────────────
+    "Markets":        ("https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258",  MAX_HEADLINES_DEFAULT),
+    "Business":       ("https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10001147",  MAX_HEADLINES_DEFAULT),
+    "US Economy":     ("https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839069",  MAX_HEADLINES_DEFAULT),
+    "Europe Markets": ("https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=19794221",  MAX_HEADLINES_DEFAULT),
+    "Asia Markets":   ("https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=19832390",  MAX_HEADLINES_DEFAULT),
+ 
+    # ── BBC World / Geopolitical ─────────────────────────────
+    # Fetches more headlines — a war or crisis in the Middle East
+    # belongs in commodities, equities, currencies AND the exec summary
+    "Geopolitical":   ("https://feeds.bbci.co.uk/news/world/rss.xml",    MAX_HEADLINES_GEOPOLITICAL),
+    "Breaking News":  ("https://feeds.bbci.co.uk/news/rss.xml",          MAX_HEADLINES_BREAKING),
+    "World Business": ("https://feeds.bbci.co.uk/news/business/rss.xml", MAX_HEADLINES_DEFAULT),
+ 
+    # ── Energy & Commodities Supply/Demand ───────────────────
+    # CNBC Energy — OPEC cuts, oil supply shocks, shipping disruptions
+    "Energy":         ("https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664", MAX_HEADLINES_DEFAULT),
+ 
+    # ── Earnings ─────────────────────────────────────────────
+    # CNBC Earnings — company results that move equity indices
+    "Earnings":       ("https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839069", MAX_HEADLINES_DEFAULT),
+ 
+    # ── Central Banks / Rates ────────────────────────────────
+    # CNBC Fed/Policy feed — rate decisions that move currencies
+    "Central Banks":  ("https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114", MAX_HEADLINES_DEFAULT),
 }
-
-
+ 
+# ── Feed routing — which feeds belong to which report section
+# report.py uses these keys in format_headlines() calls
+SECTION_FEEDS = {
+    # Every section gets geopolitical + breaking as a baseline
+    "geopolitical":  ["Geopolitical", "Breaking News"],
+ 
+    # Section-specific feeds layered on top
+    "us":            ["Markets", "US Economy", "Business", "Earnings"],
+    "europe":        ["Europe Markets", "World Business", "Business"],
+    "japan":         ["Asia Markets"],
+    "commodities":   ["Energy", "World Business"],
+    "currencies":    ["Central Banks", "Markets"],
+    "earnings":      ["Earnings", "Business"],
+}
+ 
+ 
 # ── Helper: Parse Single RSS Feed ───────────────────────────
-# Fetches and parses one RSS feed URL
-# Returns a list of headline dicts with title, date and link
-# Returns empty list if feed fails so report can continue
-def parse_feed(category, url):
+# Collects ALL headlines from the feed published in the last 7 days.
+# No arbitrary item cap — we want full week coverage, not just the
+# most recent few. max_items is kept as a safety ceiling only.
+def parse_feed(category, url, max_items=200):
     try:
-        # Set browser-like headers to avoid being blocked
-        headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(url,
-                                headers=headers,
-                                timeout=10,
-                                verify=certifi.where())
+        from datetime import timezone, timedelta
+        headers  = {"User-Agent": "Mozilla/5.0"}
+        response = requests.get(url, headers=headers, timeout=10, verify=certifi.where())
         response.raise_for_status()
-
-        # Parse XML response from RSS feed
+ 
         root    = ET.fromstring(response.content)
         channel = root.find("channel")
-
+ 
+        cutoff   = datetime.now(timezone.utc) - timedelta(days=7)
         headlines = []
-        for item in channel.findall("item")[:MAX_HEADLINES]:
-
-            # --- Extract headline title ---
-            title = item.findtext("title", "").strip()
-
-            # --- Extract and format publication date ---
+ 
+        for item in channel.findall("item")[:max_items]:
+            title    = item.findtext("title", "").strip()
             pub_date = item.findtext("pubDate", "")
-            try:
-                dt       = datetime.strptime(pub_date, "%a, %d %b %Y %H:%M:%S %z")
-                date_str = dt.strftime("%d %b %Y %H:%M")
-            except Exception:
-                date_str = pub_date
-
-            # --- Extract article link ---
-            link = item.findtext("link", "").strip()
-
-            if title:
-                headlines.append({
-                    "category": category,
-                    "title":    title,
-                    "date":     date_str,
-                    "link":     link,
-                })
-
-        print(f"  ✓ {category}: {len(headlines)} headlines fetched")
+            link     = item.findtext("link", "").strip()
+ 
+            if not title:
+                continue
+ 
+            # Parse publish date — try the standard RSS format first,
+            # then fall back to storing the raw string for display
+            dt       = None
+            date_str = pub_date
+            for fmt in ("%a, %d %b %Y %H:%M:%S %z", "%a, %d %b %Y %H:%M:%S GMT"):
+                try:
+                    dt       = datetime.strptime(pub_date, fmt)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    date_str = dt.strftime("%d %b %Y %H:%M")
+                    break
+                except Exception:
+                    continue
+ 
+            # Drop anything older than 7 days; keep if date unparseable
+            # (better to include than silently drop)
+            if dt is not None and dt < cutoff:
+                continue
+ 
+            headlines.append({
+                "category": category,
+                "title":    title,
+                "date":     date_str,
+                "dt":       dt,   # kept for sorting; not used in prompts
+                "link":     link,
+            })
+ 
+        print(f"  ✓ {category}: {len(headlines)} headlines (last 7 days)")
         return headlines
-
+ 
     except Exception as e:
         print(f"  ✗ {category}: Failed — {e}")
         return []
-
-
+ 
+ 
 # ── Fetch All News ───────────────────────────────────────────
-# Loops through all configured feeds and returns a combined
-# dictionary of headlines organised by category
-# Called by report.py to populate the news section
+# Passes a generous safety ceiling (100) to parse_feed.
+# The 7-day date filter is the real gate — not item count.
 def fetch_all_news():
-    print("\n📰  Fetching News Headlines...")
+    print("\n📰  Fetching News Headlines (last 7 days)...")
     all_news = {}
-    for category, url in FEEDS.items():
-        all_news[category] = parse_feed(category, url)
+    for category, (url, _) in FEEDS.items():
+        all_news[category] = parse_feed(category, url, max_items=100)
     return all_news
-
-
+ 
+ 
+# ── Get Headlines for a Report Section ───────────────────────
+# Returns a flat list of headlines for a given section,
+# ALWAYS prepending geopolitical/breaking headlines first
+# so world-affecting events are never silently dropped.
+#
+# Usage in report.py:
+#   get_section_headlines(news, "commodities", limit=12)
+#   get_section_headlines(news, "us",          limit=10)
+def get_section_headlines(all_news, section, limit=20):
+    """
+    Returns headlines for a report section covering the full past 7 days.
+    Geopolitical + Breaking are ALWAYS included first —
+    they are the most likely to explain market moves.
+    Section-specific feeds are appended after.
+    Results are sorted newest-first within each priority group.
+    """
+    from datetime import timezone
+ 
+    def sort_key(h):
+        if h.get("dt") is not None:
+            return h["dt"]
+        try:
+            return datetime.strptime(h["date"], "%d %b %Y %H:%M").replace(tzinfo=timezone.utc)
+        except Exception:
+            return datetime.min.replace(tzinfo=timezone.utc)
+ 
+    seen   = set()
+    geo    = []
+    specific = []
+ 
+    # 1. Geopolitical + Breaking — always first
+    for cat in SECTION_FEEDS["geopolitical"]:
+        for h in all_news.get(cat, []):
+            key = h["title"].strip().lower()
+            if key not in seen:
+                seen.add(key)
+                geo.append(h)
+ 
+    # 2. Section-specific feeds
+    for cat in SECTION_FEEDS.get(section, []):
+        for h in all_news.get(cat, []):
+            key = h["title"].strip().lower()
+            if key not in seen:
+                seen.add(key)
+                specific.append(h)
+ 
+    # Sort each group newest-first, then combine
+    geo.sort(key=sort_key, reverse=True)
+    specific.sort(key=sort_key, reverse=True)
+ 
+    return (geo + specific)[:limit]
+ 
+ 
+# ── Format Headlines for a Prompt ────────────────────────────
+# Returns a plain-text bullet list ready to paste into a prompt.
+# Includes the feed category so Claude knows the source context.
+def format_section_headlines(all_news, section, limit=12):
+    headlines = get_section_headlines(all_news, section, limit=limit)
+    if not headlines:
+        return "No headlines available."
+    lines = []
+    for h in headlines:
+        lines.append(f"[{h['category']}] {h['title']}")
+    return "\n".join(f"- {l}" for l in lines)
+ 
+ 
 # ── Helper: Get Top Headlines Across All Categories ──────────
-# Returns a flat list of the most recent headlines
-# across all categories sorted by date
-# Useful for the executive summary section of the report
 def get_top_headlines(all_news, limit=10):
     combined = []
     for category, headlines in all_news.items():
         combined.extend(headlines)
-
-    # Sort by date descending — most recent first
-    try:
-        combined.sort(
-            key=lambda x: datetime.strptime(x["date"], "%d %b %Y %H:%M"),
-            reverse=True
-        )
-    except Exception:
-        pass
-
+    # Sort by parsed datetime if available, fall back to string date
+    def sort_key(h):
+        if h.get("dt") is not None:
+            return h["dt"]
+        try:
+            from datetime import timezone
+            return datetime.strptime(h["date"], "%d %b %Y %H:%M").replace(tzinfo=timezone.utc)
+        except Exception:
+            return datetime.min.replace(tzinfo=__import__("datetime").timezone.utc)
+    combined.sort(key=sort_key, reverse=True)
     return combined[:limit]
-
-
+ 
+ 
 # ── Main: Print All Headlines ────────────────────────────────
-# Runs when news_data.py is executed directly
-# Useful for verifying all feeds load correctly
-# before integrating into the full report
 if __name__ == "__main__":
     news = fetch_all_news()
-
+ 
     print("\n" + "=" * 65)
-    print(" HEADLINES SUMMARY")
+    print(" HEADLINES BY SECTION")
     print("=" * 65)
-
-    # --- Print headlines by category ---
-    for category, headlines in news.items():
-        print(f"\n── {category} ──")
-        if headlines:
-            for h in headlines:
-                print(f"  [{h['date']}]")
-                print(f"   {h['title']}")
-        else:
-            print("  No headlines available")
-
-    # --- Print top 10 most recent across all feeds ---
+ 
+    for section in ["us", "europe", "japan", "commodities", "currencies", "earnings"]:
+        print(f"\n── {section.upper()} SECTION ──")
+        print(format_section_headlines(news, section, limit=10))
+ 
     print("\n" + "=" * 65)
-    print(" TOP 10 MOST RECENT HEADLINES")
+    print(" TOP 10 MOST RECENT ACROSS ALL FEEDS")
     print("=" * 65)
-    top = get_top_headlines(news, limit=10)
-    for h in top:
+    for h in get_top_headlines(news, limit=10):
         print(f"\n  [{h['date']}] {h['category']}")
         print(f"   {h['title']}")

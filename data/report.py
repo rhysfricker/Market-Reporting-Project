@@ -4,7 +4,7 @@
 # Focus: this week's news → market effect → why it matters
 # Charts appear in technical section only
 # ============================================================
-
+ 
 # ── Imports ─────────────────────────────────────────────────
 import os
 import re
@@ -16,14 +16,14 @@ import socketserver
 from datetime import datetime, timedelta
 from fetch_data import fetch_all_data
 from indicators import calculate_indicators, calculate_pivot_points, format_price
-from macro_data import fetch_all_macro
-from news_data import fetch_all_news, get_top_headlines
+from macro_data import fetch_all_macro, get_this_weeks_releases, val
+from news_data import fetch_all_news, get_top_headlines, format_section_headlines
 from config import instruments
-from calendar_data import get_economic_calendar
+from calendar_data import get_all_calendar_data
 import ssl
 import certifi
 ssl._create_default_https_context = lambda: ssl.create_default_context(cafile=certifi.where())
-
+ 
 # ── Configuration ────────────────────────────────────────────
 # Anthropic API key required — get yours at https://console.anthropic.com
 from dotenv import load_dotenv
@@ -33,43 +33,43 @@ OUTPUT_DIR = "reports"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 CHARTS_DIR = "charts"
 CHART_SERVER_PORT = 8765
-
+ 
 # ── Date Helpers ─────────────────────────────────────────────
 today      = datetime.today()
 week_start = today - timedelta(days=today.weekday())
 week_end   = week_start + timedelta(days=4)
 WEEK_LABEL = f"{week_start.strftime('%b %d')} – {week_end.strftime('%b %d, %Y')}"
 TODAY_STR  = today.strftime("%d %B %Y")
-
-
+ 
+ 
 # ── Local HTTP Server for Charts ─────────────────────────────
 # Chrome blocks file:// image paths during print. Serving charts
 # over localhost:8765 removes that restriction instantly.
-
+ 
 def start_chart_server(directory, port=CHART_SERVER_PORT):
     """Spin up a background HTTP server to serve chart images."""
     original_dir = os.getcwd()
     os.chdir(directory)
-
+ 
     handler = http.server.SimpleHTTPRequestHandler
     # Silence the default request logs
     handler.log_message = lambda *args: None
-
+ 
     try:
         httpd = socketserver.TCPServer(("", port), handler)
     except OSError:
         # Port already in use — server likely already running, that's fine
         os.chdir(original_dir)
         return None
-
+ 
     thread = threading.Thread(target=httpd.serve_forever)
     thread.daemon = True  # Dies automatically when main script exits
     thread.start()
     os.chdir(original_dir)
     print(f"  ✓ Chart server running at http://localhost:{port}")
     return httpd
-
-
+ 
+ 
 # ── Helper: Get Chart URL ─────────────────────────────────────
 def encode_chart(ticker):
     """Return a localhost URL for the chart image (not file://)."""
@@ -78,8 +78,8 @@ def encode_chart(ticker):
     if os.path.exists(filepath):
         return f"http://localhost:{CHART_SERVER_PORT}/{CHARTS_DIR}/{filename}_chart.png"
     return None
-
-
+ 
+ 
 # ── Helper: Call Claude API ───────────────────────────────────
 def call_claude(prompt, max_tokens=500):
     try:
@@ -104,8 +104,8 @@ def call_claude(prompt, max_tokens=500):
     except Exception as e:
         print(f"  ✗ Claude API call failed — {e}")
         return "Narrative unavailable."
-
-
+ 
+ 
 # ── Helper: Determine Bias ────────────────────────────────────
 def get_bias(latest, prev):
     try:
@@ -129,8 +129,8 @@ def get_bias(latest, prev):
             return "🟡 Neutral"
     except Exception:
         return "🟡 Neutral"
-
-
+ 
+ 
 # ── Helper: Get Weekly Price Change ──────────────────────────
 def get_weekly_change(df):
     try:
@@ -140,35 +140,45 @@ def get_weekly_change(df):
         return change
     except Exception:
         return None
-
-
-# ── Helper: Format Headlines for Prompt ──────────────────────
-def format_headlines(news, categories, limit=5):
-    items = []
-    for cat in categories:
-        for h in news.get(cat, [])[:limit]:
-            items.append(f"- {h['title']}")
-    return "\n".join(items[:10]) if items else "No headlines available"
-
-
+ 
+ 
+# format_headlines removed — use format_section_headlines(news, section) from news_data.py
+# It always prepends geopolitical + breaking headlines before section-specific ones.
+ 
+ 
 # ── SYSTEM PROMPT ─────────────────────────────────────────────
 SYSTEM_CONTEXT = """You write weekly market report sections for a general audience.
-Rules:
-1. Focus ONLY on what happened THIS WEEK
-2. Structure every point as: [what happened] → [which market moved] → [why it moved]
-3. Plain English only — if you use a financial term, explain it briefly in brackets
-4. Maximum 3 short paragraphs per section
-5. If a headline is directly relevant and market-moving, reference it naturally in the prose — do not list headlines, weave them in
-6. Only include a headline if it genuinely explains a market move — ignore irrelevant ones
-7. End with one sentence about what to watch next week
-8. Do NOT use markdown formatting — no **bold**, no ## headers, no bullet points"""
-
-
+ 
+CRITICAL DATA RULES — READ FIRST:
+1. You must ONLY use the data, figures, and headlines explicitly provided in this prompt.
+2. Do NOT use your own knowledge of current events, recent news, or market moves.
+3. Do NOT invent, estimate, or assume any figures, events, or market moves not given to you.
+4. If the prompt does not tell you a market moved, do not say it moved.
+5. If a data point is not in the "Released this week" section, do not present it as new news.
+6. If you have insufficient data to fill a paragraph, write fewer paragraphs — do not pad with fabrications.
+7. Never reference specific news events, central bank decisions, geopolitical events, or company news
+   unless they appear verbatim in the headlines provided to you.
+8. If a headline describes a geopolitical event, military conflict, supply shock, or major world event
+   that is driving market moves — NAME IT EXPLICITLY. Do not describe the effect (e.g. "oil surged")
+   without naming the cause (e.g. "following US-Israeli strikes on Iran and the Strait of Hormuz closure").
+9. Headlines tagged [Geopolitical] or [Breaking News] are the highest priority — if they explain a
+   market move, they MUST be referenced. Do not bury or omit them.
+ 
+WRITING RULES:
+8. Structure every point as: [what happened] → [which market moved] → [why it moved]
+9. Plain English only — if you use a financial term, explain it briefly in brackets
+10. Maximum 3 short paragraphs per section — fewer if the data does not support more
+11. Weave relevant headlines naturally into prose — do not list them
+12. Only reference a headline if it directly explains a market move in the data provided
+13. End with one sentence about what to watch next week, based only on data provided
+14. Do NOT use markdown formatting — no **bold**, no ## headers, no bullet points"""
+ 
+ 
 # ── Section: Executive Summary ────────────────────────────────
-def build_executive_summary(macro, news, all_data):
+def build_executive_summary(macro, releases, news, all_data):
     print("  Writing executive summary...")
-    top_news      = get_top_headlines(news, limit=8)
-    headlines_txt = "\n".join([f"- {h['title']}" for h in top_news])
+    # Executive summary gets ALL section feeds merged — it covers everything
+    headlines_txt = format_section_headlines(news, "us", limit=20)
     changes = {}
     for name, ticker in [("S&P500","ES=F"),("Nasdaq","NQ=F"),("Gold","GC=F"),("Oil","CL=F")]:
         if ticker in all_data:
@@ -178,31 +188,54 @@ def build_executive_summary(macro, news, all_data):
         f"{k}: {'+' if v and v>0 else ''}{v}%"
         for k, v in changes.items() if v is not None
     ])
-    us = macro["us"]
+ 
+    released_txt = ""
+    if releases["any"]:
+        parts = []
+        if releases["us"]:
+            parts.append("US: " + " | ".join(releases["us"]))
+        if releases["eu"]:
+            parts.append("EU/UK: " + " | ".join(releases["eu"]))
+        if releases["jp"]:
+            parts.append("Japan: " + " | ".join(releases["jp"]))
+        released_txt = "\n".join(parts)
+    else:
+        us = macro["us"]
+        released_txt = (
+            f"- US Jobs: {val(us.get('nonfarm_payrolls'))}k | "
+            f"Unemployment: {val(us.get('unemployment'))}% | "
+            f"CPI: {val(us.get('cpi_yoy'))}% | "
+            f"Fed Rate: {val(us.get('fed_funds_rate'))}%"
+        )
+ 
     prompt = f"""{SYSTEM_CONTEXT}
-
+ 
+REMINDER: Base your writing ONLY on the market moves, data, and headlines listed below.
+Do not add any events, figures, or context not explicitly provided.
+If a [Geopolitical] or [Breaking News] headline explains market moves this week, name it explicitly.
+ 
 Write an executive summary for this week's market report. Maximum 4 sentences.
-Start with the single most important story of the week.
+Start with the single most important story of the week — if it is a geopolitical event, name it.
 Use the format: X happened → markets did Y → because Z.
 Weave in the most market-moving headline naturally if relevant.
 End with the biggest risk to watch next week.
-
-Headlines available this week (only use if genuinely market-moving):
+ 
+Headlines available this week (geopolitical/breaking listed first — use if market-moving):
 {headlines_txt}
-
+ 
 Key market moves this week:
 {changes_txt}
-
+ 
 Key data released this week:
-- US Jobs: {us.get('nonfarm_payrolls')}k | Unemployment: {us.get('unemployment')}%
-- US CPI Inflation: {us.get('cpi_yoy')}% | Fed Rate: {us.get('fed_funds_rate')}%"""
+{released_txt}"""
     return call_claude(prompt, max_tokens=300)
-
-
+ 
+ 
 # ── Section: US Narrative ─────────────────────────────────────
-def build_us_narrative(macro, news, all_data):
+def build_us_narrative(macro, releases, news, all_data):
     print("  Writing US narrative...")
-    headlines = format_headlines(news, ["Markets", "US Economy", "Business"])
+    # Geopolitical + Breaking always prepended; then US-specific feeds (markets, economy, earnings)
+    headlines = format_section_headlines(news, "us", limit=20)
     us        = macro["us"]
     changes = {}
     for name, ticker in [("S&P500","ES=F"),("Nasdaq","NQ=F"),("Dow","YM=F"),("Dollar","DX-Y.NYB")]:
@@ -213,33 +246,46 @@ def build_us_narrative(macro, news, all_data):
         f"{k}: {'+' if v and v>0 else ''}{v}%"
         for k, v in changes.items() if v is not None
     ])
+ 
+    # Split into released this week vs background context
+    released_us = releases["us"]
+    background = [
+        f"Fed Rate: {val(us.get('fed_funds_rate'))}%",
+        f"10yr Yield: {val(us.get('yield_10yr'))}%",
+        f"Yield spread: {val(us.get('yield_spread'))}% ({'normal' if (val(us.get('yield_spread')) or 0) > 0 else 'inverted — recession warning'})",
+    ]
+ 
     prompt = f"""{SYSTEM_CONTEXT}
-
+ 
+REMINDER: Base your writing ONLY on the market moves, data, and headlines listed below.
+Do not add any events, figures, or context not explicitly provided.
+If a [Geopolitical] or [Breaking News] headline is driving US market moves, name it explicitly — not just its effect.
+If an [Earnings] headline moved equity indices this week, include it.
+ 
 Write the US Economy section. 3 short paragraphs. Each = one key story this week.
 Format: [news event] → [US market that reacted] → [why it reacted]
 Only mention data figures if they were released this week and caused a market move.
 Weave in specific headlines naturally where they explain a market move — do not list them.
-
-Available headlines (only use if market-moving):
+ 
+Available headlines (geopolitical/breaking listed first):
 {headlines}
-
+ 
 US market moves this week:
 {changes_txt}
-
-US data released this week:
-- Jobs: {us.get('nonfarm_payrolls')}k ({'a miss — jobs were lost' if us.get('nonfarm_payrolls',0) < 0 else 'jobs added'})
-- Unemployment: {us.get('unemployment')}%
-- CPI Inflation: {us.get('cpi_yoy')}%
-- Fed Rate: {us.get('fed_funds_rate')}%
-- 10yr Bond Yield: {us.get('yield_10yr')}%
-- Yield curve spread: {us.get('yield_spread')}% ({'normal' if us.get('yield_spread',0)>0 else 'inverted — recession warning'})"""
+ 
+Released this week (USE THESE — they are confirmed this week's data):
+{chr(10).join(released_us) if released_us else 'No major US releases confirmed this week'}
+ 
+Background context (only mention if directly relevant to a market move):
+{chr(10).join(background)}"""
     return call_claude(prompt, max_tokens=500)
-
-
+ 
+ 
 # ── Section: Europe & UK Narrative ───────────────────────────
-def build_europe_narrative(macro, news, all_data):
+def build_europe_narrative(macro, releases, news, all_data):
     print("  Writing Europe & UK narrative...")
-    headlines = format_headlines(news, ["Europe Markets", "World Business", "Geopolitical"])
+    # Geopolitical + Breaking always prepended; then Europe-specific feeds
+    headlines = format_section_headlines(news, "europe", limit=20)
     eu        = macro["eu"]
     changes = {}
     for name, ticker in [("DAX","^GDAXI"),("FTSE100","^FTSE"),("EuroStoxx","^STOXX50E"),("Euro","6E=F"),("Sterling","6B=F")]:
@@ -250,28 +296,45 @@ def build_europe_narrative(macro, news, all_data):
         f"{k}: {'+' if v and v>0 else ''}{v}%"
         for k, v in changes.items() if v is not None
     ])
+ 
+    released_eu = releases["eu"]
+    background = [
+        f"ECB Rate: {val(eu.get('ecb_rate'))}%",
+        f"BoE Rate: {val(eu.get('boe_rate'))}%",
+        f"EZ Inflation: {val(eu.get('ez_cpi'))}%",
+        f"UK Inflation: {val(eu.get('uk_cpi'))}%",
+    ]
+ 
     prompt = f"""{SYSTEM_CONTEXT}
-
+ 
+REMINDER: Base your writing ONLY on the market moves, data, and headlines listed below.
+Do not add any events, figures, or context not explicitly provided.
+If a [Geopolitical] or [Breaking News] headline is driving European market moves, name it explicitly.
+[Central Banks] headlines about ECB or BoE decisions must be included if present — they directly move EUR and GBP.
+ 
 Write the Europe & UK section. Cover Eurozone AND UK separately — they often move differently.
 3 short paragraphs. Format: [news event] → [which market moved] → [why]
 Weave in specific headlines naturally where they explain a market move — do not list them.
-
-Available headlines (only use if market-moving):
+ 
+Available headlines (geopolitical/breaking listed first):
 {headlines}
-
+ 
 Market moves this week:
 {changes_txt}
-
-Key rates for context (only mention if relevant to this week):
-- ECB Rate: {eu.get('ecb_rate')}% | BoE Rate: {eu.get('boe_rate')}%
-- EZ Inflation: {eu.get('ez_cpi')}% | UK Inflation: {eu.get('uk_cpi')}%"""
+ 
+Released this week (USE THESE — confirmed this week's data):
+{chr(10).join(released_eu) if released_eu else 'No major EU/UK releases confirmed this week'}
+ 
+Background context (only mention if directly relevant):
+{chr(10).join(background)}"""
     return call_claude(prompt, max_tokens=500)
-
-
+ 
+ 
 # ── Section: Japan Narrative ──────────────────────────────────
-def build_japan_narrative(macro, news, all_data):
+def build_japan_narrative(macro, releases, news, all_data):
     print("  Writing Japan narrative...")
-    headlines = format_headlines(news, ["Asia Markets", "Geopolitical"])
+    # Geopolitical + Breaking always prepended; then Asia/Japan-specific feeds
+    headlines = format_section_headlines(news, "japan", limit=15)
     jp        = macro["jp"]
     changes = {}
     for name, ticker in [("Nikkei","NKD=F"),("Yen","6J=F")]:
@@ -282,29 +345,46 @@ def build_japan_narrative(macro, news, all_data):
         f"{k}: {'+' if v and v>0 else ''}{v}%"
         for k, v in changes.items() if v is not None
     ])
+ 
+    released_jp = releases["jp"]
+    background = [
+        f"BoJ Rate: {val(jp.get('boj_rate'))}%",
+        f"Japan CPI: {val(jp.get('japan_cpi'))}%",
+    ]
+ 
     prompt = f"""{SYSTEM_CONTEXT}
-
+ 
+REMINDER: Base your writing ONLY on the market moves, data, and headlines listed below.
+Do not add any events, figures, or context not explicitly provided.
+If a [Geopolitical] or [Breaking News] headline is affecting the Nikkei or Yen, name it explicitly.
+[Central Banks] headlines about the BoJ must be included if present — BoJ rate decisions move the Yen globally.
+ 
 Write the Japan section. 2 short paragraphs.
 Format: [news event] → [Nikkei or Yen reaction] → [why]
 If relevant, explain the Yen carry trade simply:
 (investors borrow cheap Yen to invest elsewhere — if BoJ raises rates, this unwinds and hits global markets)
 Weave in specific headlines naturally where they explain a market move — do not list them.
-
-Available headlines (only use if market-moving):
+ 
+Available headlines (geopolitical/breaking listed first):
 {headlines}
-
+ 
 Japan market moves this week:
 {changes_txt}
-
-Key data (only mention if released this week):
-- BoJ Rate: {jp.get('boj_rate')}% | Japan CPI: {jp.get('japan_cpi')}%"""
+ 
+Released this week (USE THESE — confirmed this week's data):
+{chr(10).join(released_jp) if released_jp else 'No major Japan releases confirmed this week'}
+ 
+Background context (only mention if directly relevant):
+{chr(10).join(background)}"""
     return call_claude(prompt, max_tokens=400)
-
-
+ 
+ 
 # ── Section: Commodities Narrative ───────────────────────────
 def build_commodities_narrative(macro, news, all_data):
     print("  Writing commodities narrative...")
-    headlines = format_headlines(news, ["Geopolitical", "World Business", "Breaking News"])
+    # Commodities: geopolitical first (wars, sanctions, Hormuz closures drive oil)
+    # then energy/supply-demand feeds (OPEC, shipping, production data)
+    headlines = format_section_headlines(news, "commodities", limit=20)
     commodities = {}
     for name, ticker in [("Gold","GC=F"),("Silver","SI=F"),("Oil","CL=F")]:
         if ticker in all_data:
@@ -323,20 +403,29 @@ def build_commodities_narrative(macro, news, all_data):
         for k, v in commodities.items() if v
     ])
     prompt = f"""{SYSTEM_CONTEXT}
-
+ 
+REMINDER: Base your writing ONLY on the commodity prices, moves, and headlines listed below.
+Do not add any events, figures, or context not explicitly provided.
+ 
+COMMODITY-SPECIFIC RULES:
+- If a [Geopolitical] or [Breaking News] headline explains an oil or gold price move, NAME IT EXPLICITLY.
+  Do not write "oil surged" without stating the cause (e.g. "following the closure of the Strait of Hormuz").
+- If an [Energy] headline covers supply disruption, OPEC cuts, or shipping blockades, use it to explain price moves.
+- Gold moves often reflect investor fear — if a geopolitical event is driving gold, say so explicitly.
+ 
 Write the Commodities section. 2 short paragraphs.
-Format: [news event] → [commodity price move] → [why and what it means for ordinary people]
+Format: [named news event or supply/demand driver] → [commodity price move] → [what it means for ordinary people]
 Connect to real life — e.g. oil rising means petrol costs more, gold rising means investors are nervous.
 Weave in specific headlines naturally where they explain a price move — do not list them.
-
-Available headlines (only use if market-moving):
+ 
+Available headlines (geopolitical/breaking listed first, then supply/demand):
 {headlines}
-
+ 
 Commodity prices and weekly moves:
 {prices_txt}"""
     return call_claude(prompt, max_tokens=400)
-
-
+ 
+ 
 # ── Section: Technical Analysis Narrative ────────────────────
 def build_technical_narrative(all_data):
     print("  Writing technical analysis narrative...")
@@ -359,27 +448,30 @@ def build_technical_narrative(all_data):
             continue
     signals_txt = "\n".join(signals)
     prompt = f"""{SYSTEM_CONTEXT}
-
+ 
+REMINDER: Base your writing ONLY on the technical readings listed below.
+Do not reference any news events, macro data, or context not explicitly provided.
+ 
 Write the Technical Analysis section. 3 short paragraphs:
-
+ 
 Para 1: Overall market picture — are most markets trending up, down or sideways?
         RSI above 70 = overbought (price likely to pull back).
         RSI below 30 = oversold (price likely to bounce).
         RSI 40-60 = neutral territory.
-
+ 
 Para 2: The 2-3 most interesting signals this week.
         MACD measures momentum — crossing above its signal line means momentum is turning positive.
         Mention any extreme RSI readings or instruments near key support/resistance.
-
+ 
 Para 3: What the charts suggest for next week.
         Which instruments look strongest? Weakest?
         What price levels are most important to watch?
-
+ 
 Current readings:
 {signals_txt}"""
     return call_claude(prompt, max_tokens=500)
-
-
+ 
+ 
 # ── HTML: Chart Card ──────────────────────────────────────────
 def chart_card(ticker, name):
     img_url = encode_chart(ticker)
@@ -389,8 +481,8 @@ def chart_card(ticker, name):
         <img src="{img_url}" alt="{name} chart" loading="eager">
         <div class="chart-caption">{name} — Daily Chart</div>
     </div>"""
-
-
+ 
+ 
 # ── HTML: Bias Table Row ──────────────────────────────────────
 def bias_row(inst, all_data):
     ticker = inst["ticker"]
@@ -423,13 +515,12 @@ def bias_row(inst, all_data):
         </tr>"""
     except Exception:
         return ""
-
-
+ 
+ 
 # ── HTML: Events Calendar ─────────────────────────────────────
-def events_html():
-    events = get_economic_calendar()
+def events_html(next_week_events):
     rows = ""
-    for ev in events:
+    for ev in next_week_events:
         impact_col = "#e74c3c" if ev["impact"] == "High" else "#c9a84c"
         forecast   = ev.get("forecast", "—")
         previous   = ev.get("previous", "—")
@@ -443,8 +534,8 @@ def events_html():
             <td style="font-family:'IBM Plex Mono',monospace;font-size:12px">{previous}</td>
         </tr>"""
     return rows
-
-
+ 
+ 
 # ── HTML: Narrative Paragraphs ────────────────────────────────
 def narrative_html(text):
     lines = []
@@ -459,39 +550,41 @@ def narrative_html(text):
         line = re.sub(r'_(.+?)_',       r'\1', line)
         lines.append(line)
     return "".join(f"<p>{p}</p>" for p in lines if p)
-
-
+ 
+ 
 # ── Build Full HTML Report ────────────────────────────────────
 def build_report():
     print("\n📊  Building Weekly G7 Market Report...")
     print("─" * 55)
-
+ 
     print("\n[1/6] Fetching market data...")
     all_data = fetch_all_data()
-
-    print("\n[2/6] Fetching macro data...")
-    macro = fetch_all_macro()
-
+ 
+    print("\n[2/6] Fetching calendar & macro data...")
+    calendar = get_all_calendar_data()
+    macro    = fetch_all_macro(calendar["this_week"])
+    releases = get_this_weeks_releases(macro)
+ 
     print("\n[3/6] Fetching news headlines...")
     news = fetch_all_news()
-
+ 
     print("\n[4/6] Generating AI narratives...")
-    exec_summary     = build_executive_summary(macro, news, all_data)
-    us_narrative     = build_us_narrative(macro, news, all_data)
-    europe_narrative = build_europe_narrative(macro, news, all_data)
-    japan_narrative  = build_japan_narrative(macro, news, all_data)
+    exec_summary     = build_executive_summary(macro, releases, news, all_data)
+    us_narrative     = build_us_narrative(macro, releases, news, all_data)
+    europe_narrative = build_europe_narrative(macro, releases, news, all_data)
+    japan_narrative  = build_japan_narrative(macro, releases, news, all_data)
     commodities_narr = build_commodities_narrative(macro, news, all_data)
     technical_narr   = build_technical_narrative(all_data)
-
+ 
     print("\n[5/6] Building bias table...")
     bias_rows = "".join(bias_row(inst, all_data) for inst in instruments)
-
+ 
     print("\n[6/6] Starting chart server & assembling HTML...")
-
+ 
     # Start local server so Chrome can load charts during print
     # (Chrome blocks file:// image paths in its print renderer)
     server = start_chart_server(os.getcwd(), port=CHART_SERVER_PORT)
-
+ 
     us_charts = "".join([
         chart_card("ES=F",     "S&P 500"),
         chart_card("NQ=F",     "Nasdaq"),
@@ -514,7 +607,7 @@ def build_report():
         chart_card("SI=F", "Silver"),
         chart_card("CL=F", "Crude Oil"),
     ])
-
+ 
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -531,7 +624,7 @@ def build_report():
     --green:#2ecc71;--red:#e74c3c;--border:rgba(201,168,76,0.18);
 }}
 body{{background:var(--navy);color:var(--text);font-family:'Source Sans 3',sans-serif;font-weight:300;line-height:1.75}}
-
+ 
 /* Header */
 .report-header{{background:linear-gradient(160deg,#080f18 0%,#0f1e30 50%,#0d1b2a 100%);border-bottom:2px solid var(--gold);padding:70px 40px 55px;text-align:center;position:relative;overflow:hidden}}
 .report-header::before{{content:'';position:absolute;inset:0;background:radial-gradient(ellipse at 50% -20%,rgba(201,168,76,0.1) 0%,transparent 65%);pointer-events:none}}
@@ -540,23 +633,23 @@ body{{background:var(--navy);color:var(--text);font-family:'Source Sans 3',sans-
 .report-title span{{color:var(--gold)}}
 .report-dates{{font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--gold);letter-spacing:3px;margin-bottom:24px}}
 .report-disclaimer{{font-size:12px;color:var(--text-dim);max-width:560px;margin:0 auto;font-style:italic;line-height:1.6}}
-
+ 
 /* Layout */
 .container{{max-width:1160px;margin:0 auto;padding:0 28px}}
 .section{{padding:64px 0;border-bottom:1px solid var(--border)}}
 .section-eyebrow{{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:5px;color:var(--gold);text-transform:uppercase;margin-bottom:10px;opacity:.8}}
 .section-title{{font-family:'Playfair Display',serif;font-size:clamp(24px,3.5vw,36px);font-weight:700;color:var(--text);margin-bottom:6px;line-height:1.2}}
 .section-rule{{width:48px;height:2px;background:var(--gold);margin:18px 0 34px;opacity:.5}}
-
+ 
 /* Exec box */
 .exec-box{{background:linear-gradient(135deg,var(--navy-mid),#16293f);border:1px solid var(--border);border-left:3px solid var(--gold);border-radius:3px;padding:30px 36px;font-size:16px;line-height:1.85;color:var(--text)}}
 .exec-box p{{margin-bottom:14px}}
 .exec-box p:last-child{{margin-bottom:0}}
-
+ 
 /* Narrative */
 .narrative p{{font-size:15px;line-height:1.85;color:var(--text-mid);margin-bottom:18px}}
 .narrative p:last-child{{margin-bottom:0}}
-
+ 
 /* Charts */
 .charts-grid{{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin:12px 0 0}}
 .chart-card{{background:var(--navy-mid);border:1px solid var(--border);border-radius:4px;overflow:hidden}}
@@ -564,7 +657,7 @@ body{{background:var(--navy);color:var(--text);font-family:'Source Sans 3',sans-
 .chart-caption{{font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--gold);padding:7px 14px;letter-spacing:1.5px;border-top:1px solid var(--border);text-transform:uppercase}}
 .chart-region{{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:4px;color:var(--text-dim);text-transform:uppercase;margin:24px 0 10px;padding-bottom:8px;border-bottom:1px solid var(--border)}}
 .chart-group{{margin-bottom:6px}}
-
+ 
 /* Bias table */
 .bias-wrap{{overflow-x:auto;margin-top:8px}}
 .bias-table{{width:100%;border-collapse:collapse;font-size:13px}}
@@ -572,17 +665,17 @@ body{{background:var(--navy);color:var(--text);font-family:'Source Sans 3',sans-
 .bias-table td{{padding:11px 14px;border-bottom:1px solid rgba(255,255,255,0.035);color:var(--text-mid);vertical-align:middle}}
 .bias-table tr:hover td{{background:rgba(201,168,76,0.03)}}
 .bias-table td:first-child{{color:var(--text);font-weight:600}}
-
+ 
 /* Events */
 .events-table{{width:100%;border-collapse:collapse;font-size:14px;margin-top:24px}}
 .events-table th{{font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:2px;padding:10px 16px;border-bottom:1px solid var(--border);text-align:left}}
 .events-table td{{padding:13px 16px;border-bottom:1px solid rgba(255,255,255,0.04);color:var(--text-mid)}}
 .events-table td:first-child{{font-family:'IBM Plex Mono',monospace;color:var(--gold);font-size:12px;white-space:nowrap}}
-
+ 
 /* Footer */
 .report-footer{{background:var(--navy-mid);border-top:1px solid var(--border);padding:44px 40px;text-align:center;font-size:12px;color:var(--text-dim);line-height:2}}
 .report-footer strong{{color:var(--gold)}}
-
+ 
 /* ── Print Styles ───────────────────────────────────────────
    GOLDEN RULES:
    1. ONLY apply page-break-inside:avoid to genuinely small elements
@@ -597,12 +690,12 @@ body{{background:var(--navy);color:var(--text);font-family:'Source Sans 3',sans-
 ─────────────────────────────────────────────────────────── */
 @media print {{
     @page {{ margin: 10mm 10mm; }}
-
+ 
     body {{
         -webkit-print-color-adjust: exact;
         print-color-adjust: exact;
     }}
-
+ 
     /* ── Kill all padding/margin that creates phantom gaps ── */
     .section {{
         padding: 12px 0 !important;
@@ -617,35 +710,35 @@ body{{background:var(--navy);color:var(--text);font-family:'Source Sans 3',sans-
     .charts-grid   {{ margin: 4px 0 0 !important; gap: 6px !important; }}
     .narrative p   {{ margin-bottom: 10px !important; }}
     .exec-box      {{ padding: 16px 20px !important; }}
-
+ 
     /* ── Headings: keep eyebrow+title+rule together ── */
     .section-eyebrow {{ page-break-after: avoid; break-after: avoid; }}
     .section-title   {{ page-break-after: avoid; break-after: avoid; }}
     .section-rule    {{ page-break-after: avoid; break-after: avoid; }}
-
+ 
     /* ── Content containers: always auto (allow breaking) ── */
     .exec-box      {{ page-break-inside: avoid; break-inside: avoid; }}
     .narrative     {{ page-break-inside: auto;  break-inside: auto; }}
     .chart-group   {{ page-break-inside: auto;  break-inside: auto; }}
     .charts-grid   {{ page-break-inside: auto;  break-inside: auto; }}
-
+ 
     /* ── Atomic units only: keep these together ── */
     .chart-card         {{ page-break-inside: avoid; break-inside: avoid; }}
     .bias-table tr      {{ page-break-inside: avoid; break-inside: avoid; }}
     .events-table tr    {{ page-break-inside: avoid; break-inside: avoid; }}
-
+ 
     /* ── Tables: repeat header, allow body to break ── */
     .bias-wrap      {{ page-break-inside: auto; break-inside: auto; overflow: visible; }}
     .bias-table     {{ page-break-inside: auto; }}
     .bias-table thead {{ display: table-header-group; }}
     .events-table   {{ page-break-inside: auto; }}
-
+ 
     /* ── Prevent report header taking whole first page ── */
     .report-header {{ padding: 20px 20px 16px !important; }}
     .report-title  {{ font-size: 36px !important; margin-bottom: 8px !important; }}
     .report-dates  {{ margin-bottom: 10px !important; }}
 }}
-
+ 
 @media(max-width:768px){{
     .report-header{{padding:44px 20px}}
     .section{{padding:44px 0}}
@@ -655,7 +748,7 @@ body{{background:var(--navy);color:var(--text);font-family:'Source Sans 3',sans-
 </style>
 </head>
 <body>
-
+ 
 <div class="report-header">
     <div class="header-eyebrow">G7 Markets · Weekly Intelligence Report</div>
     <h1 class="report-title">Weekly <span>Market</span> Report</h1>
@@ -665,71 +758,71 @@ body{{background:var(--navy);color:var(--text);font-family:'Source Sans 3',sans-
         Data: FRED API · CNBC · BBC News · Yahoo Finance · Generated {TODAY_STR}
     </p>
 </div>
-
+ 
 <div class="container">
-
+ 
 <div class="section">
     <div class="section-eyebrow">Overview</div>
     <h2 class="section-title">Executive Summary</h2>
     <div class="section-rule"></div>
     <div class="exec-box">{narrative_html(exec_summary)}</div>
 </div>
-
+ 
 <div class="section">
     <div class="section-eyebrow">United States</div>
     <h2 class="section-title">🇺🇸 US Economy & Markets</h2>
     <div class="section-rule"></div>
     <div class="narrative">{narrative_html(us_narrative)}</div>
 </div>
-
+ 
 <div class="section">
     <div class="section-eyebrow">Europe & United Kingdom</div>
     <h2 class="section-title">🇪🇺 Europe & UK Economy & Markets</h2>
     <div class="section-rule"></div>
     <div class="narrative">{narrative_html(europe_narrative)}</div>
 </div>
-
+ 
 <div class="section">
     <div class="section-eyebrow">Japan</div>
     <h2 class="section-title">🇯🇵 Japan Economy & Markets</h2>
     <div class="section-rule"></div>
     <div class="narrative">{narrative_html(japan_narrative)}</div>
 </div>
-
+ 
 <div class="section">
     <div class="section-eyebrow">Commodities</div>
     <h2 class="section-title">⚡ Commodities</h2>
     <div class="section-rule"></div>
     <div class="narrative">{narrative_html(commodities_narr)}</div>
 </div>
-
+ 
 <div class="section">
     <div class="section-eyebrow">Technical Analysis</div>
     <h2 class="section-title">📈 Technical Analysis</h2>
     <div class="section-rule"></div>
     <div class="narrative">{narrative_html(technical_narr)}</div>
-
+ 
     <div class="chart-group">
         <div class="chart-region">United States</div>
         <div class="charts-grid">{us_charts}</div>
     </div>
-
+ 
     <div class="chart-group">
         <div class="chart-region">Europe & United Kingdom</div>
         <div class="charts-grid">{eu_charts}</div>
     </div>
-
+ 
     <div class="chart-group">
         <div class="chart-region">Japan</div>
         <div class="charts-grid">{jp_charts}</div>
     </div>
-
+ 
     <div class="chart-group">
         <div class="chart-region">Commodities</div>
         <div class="charts-grid">{cm_charts}</div>
     </div>
 </div>
-
+ 
 <div class="section">
     <div class="section-eyebrow">Market Summary</div>
     <h2 class="section-title">📊 Trader's Bias Summary</h2>
@@ -744,7 +837,7 @@ body{{background:var(--navy);color:var(--text);font-family:'Source Sans 3',sans-
         </table>
     </div>
 </div>
-
+ 
 <div class="section">
     <div class="section-eyebrow">Looking Ahead</div>
     <h2 class="section-title">📅 Key Events Next Week</h2>
@@ -754,28 +847,27 @@ body{{background:var(--navy);color:var(--text);font-family:'Source Sans 3',sans-
         <th>Day</th><th>Time</th><th>Currency</th>
         <th>Event</th><th>Impact</th><th>Forecast</th><th>Previous</th>
     </tr></thead>
-        
-        <tbody>{events_html()}</tbody>
+        <tbody>{events_html(calendar["next_week"])}</tbody>
     </table>
 </div>
-
+ 
 </div>
-
+ 
 <div class="report-footer">
     <strong>G7 Weekly Market Report</strong> · {WEEK_LABEL}<br>
     Data: FRED API · CNBC · BBC News · Yahoo Finance<br>
     Auto-generated for educational purposes only. Not financial advice.<br>
     Built with Python · Open source on GitHub
 </div>
-
+ 
 </body>
 </html>"""
-
+ 
     filename = f"G7_Market_Report_{today.strftime('%Y_%m_%d')}.html"
     filepath = os.path.join(OUTPUT_DIR, filename)
     with open(filepath, "w", encoding="utf-8") as f:
         f.write(html)
-
+ 
     print(f"\n✅  Report saved: {filepath}")
     print(f"\n{'─'*55}")
     print(f"  ⚠️  IMPORTANT: Open the report via localhost, not file://")
@@ -784,7 +876,7 @@ body{{background:var(--navy);color:var(--text);font-family:'Source Sans 3',sans-
     print(f"  Then: Cmd+P → Save as PDF → tick Background Graphics → Save")
     print(f"  Press Ctrl+C in this terminal when done.")
     print(f"{'─'*55}\n")
-
+ 
     try:
         import time
         while True:
@@ -792,9 +884,9 @@ body{{background:var(--navy);color:var(--text);font-family:'Source Sans 3',sans-
     except KeyboardInterrupt:
         print("\n  Server stopped. Goodbye.")
         if server:
-            server.shutdown()    
-
-
+            server.shutdown()
+ 
+ 
 # ── Main ──────────────────────────────────────────────────────
 if __name__ == "__main__":
     build_report()

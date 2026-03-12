@@ -1,270 +1,205 @@
-"""
-calendar_data.py
-----------------
-Fetches next week's high-impact economic calendar events from the
-ForexFactory XML feed and returns them as a structured list of dicts.
-
-Feed URLs (no API key required):
-  This week : https://nfs.faireconomy.media/ff_calendar_thisweek.xml
-  Next week : https://nfs.faireconomy.media/ff_calendar_nextweek.xml
-
-Each <event> in the feed contains:
-  <title>      — event name
-  <country>    — two-letter country code (USD, EUR, GBP, JPY, CAD, etc.)
-  <date>       — ISO 8601 datetime string
-  <impact>     — High / Medium / Low / Holiday
-  <forecast>   — analyst consensus estimate (may be empty)
-  <previous>   — prior reading (may be empty)
-
-This module:
-  1. Fetches next week's XML feed (with a User-Agent header FF requires)
-  2. Falls back to this week's feed if next week returns nothing
-  3. Filters to HIGH-impact events for G7 currencies only
-  4. Optionally includes MEDIUM-impact events (toggle via INCLUDE_MEDIUM)
-  5. Returns a clean list of dicts ready for the HTML report
-  6. Falls back to a hardcoded list if the live feed is completely unavailable
-"""
-
+# ============================================================
+# calendar_data.py
+# Fetches economic calendar data from ForexFactory XML feeds
+#
+# Returns two separate datasets:
+#
+#   get_next_week_events()
+#     → List of dicts for the report's "Key Events Next Week"
+#       section. Fetches ff_calendar_nextweek.xml.
+#       Falls back to ff_calendar_thisweek.xml if next week
+#       isn't published yet (before Friday).
+#
+#   get_this_week_events()
+#     → List of dicts for this week's actual releases.
+#       Fetches ff_calendar_thisweek.xml.
+#       Used by macro_data.py to verify which economic events
+#       genuinely occurred this week before flagging FRED series
+#       as released_this_week=True.
+#
+# Both functions filter to:
+#   - High impact events only (toggle INCLUDE_MEDIUM to add Medium)
+#   - G7 currencies: USD, EUR, GBP, JPY, CAD, CHF
+#
+# Report runs every Saturday so:
+#   thisweek feed  = Mon–Fri just gone  → event verification
+#   nextweek feed  = Mon–Fri coming     → calendar section
+# ============================================================
+ 
 import requests
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta
+from datetime import datetime
 import logging
-
-# ---------------------------------------------------------------------------
-# CONFIG
-# ---------------------------------------------------------------------------
-
-# Toggle whether medium-impact events are included alongside high-impact ones
+ 
+# ── Config ───────────────────────────────────────────────────
 INCLUDE_MEDIUM = False
-
-# G7 currency codes as used by ForexFactory
+ 
 G7_CURRENCIES = {"USD", "EUR", "GBP", "JPY", "CAD", "CHF"}
-
-# Request headers — ForexFactory requires a browser-like User-Agent
+ 
+FEED_THIS_WEEK = "https://nfs.faireconomy.media/ff_calendar_thisweek.xml"
+FEED_NEXT_WEEK = "https://nfs.faireconomy.media/ff_calendar_nextweek.xml"
+ 
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/122.0.0.0 Safari/537.36"
     ),
-    "Accept": "application/xml, text/xml, */*",
+    "Accept":          "application/xml, text/xml, */*",
     "Accept-Language": "en-GB,en;q=0.9",
-    "Referer": "https://www.forexfactory.com/",
+    "Referer":         "https://www.forexfactory.com/",
 }
-
-FEED_NEXT_WEEK = "https://nfs.faireconomy.media/ff_calendar_nextweek.xml"
-FEED_THIS_WEEK = "https://nfs.faireconomy.media/ff_calendar_thisweek.xml"
-
-REQUEST_TIMEOUT = 15  # seconds
-
-# ---------------------------------------------------------------------------
-# CURRENCY → FLAG / COUNTRY LABEL MAPPING
-# ---------------------------------------------------------------------------
-
+ 
+REQUEST_TIMEOUT = 15
+ 
+# ── Currency Labels ──────────────────────────────────────────
 CURRENCY_LABELS = {
-    "USD": "🇺🇸 USD",
-    "EUR": "🇪🇺 EUR",
-    "GBP": "🇬🇧 GBP",
-    "JPY": "🇯🇵 JPY",
-    "CAD": "🇨🇦 CAD",
-    "CHF": "🇨🇭 CHF",
-    "AUD": "🇦🇺 AUD",
-    "NZD": "🇳🇿 NZD",
-    "CNY": "🇨🇳 CNY",
+    "USD": "🇺🇸 USD", "EUR": "🇪🇺 EUR", "GBP": "🇬🇧 GBP",
+    "JPY": "🇯🇵 JPY", "CAD": "🇨🇦 CAD", "CHF": "🇨🇭 CHF",
 }
-
-# ---------------------------------------------------------------------------
-# FALLBACK DATA (used only if the live feed is completely unavailable)
-# These are illustrative placeholders — update before each release if needed
-# ---------------------------------------------------------------------------
-
-FALLBACK_EVENTS = [
-    {
-        "date": "Mon",
-        "time": "—",
-        "currency": "USD",
-        "currency_label": "🇺🇸 USD",
-        "event": "ISM Services PMI",
-        "impact": "High",
-        "forecast": "52.8",
-        "previous": "52.8",
-    },
-    {
-        "date": "Tue",
-        "time": "—",
-        "currency": "EUR",
-        "currency_label": "🇪🇺 EUR",
-        "event": "German ZEW Economic Sentiment",
-        "impact": "High",
-        "forecast": "12.0",
-        "previous": "26.0",
-    },
-    {
-        "date": "Wed",
-        "time": "—",
-        "currency": "USD",
-        "currency_label": "🇺🇸 USD",
-        "event": "FOMC Meeting Minutes",
-        "impact": "High",
-        "forecast": "—",
-        "previous": "—",
-    },
-    {
-        "date": "Wed",
-        "time": "—",
-        "currency": "USD",
-        "currency_label": "🇺🇸 USD",
-        "event": "CPI m/m",
-        "impact": "High",
-        "forecast": "0.3%",
-        "previous": "0.2%",
-    },
-    {
-        "date": "Thu",
-        "time": "—",
-        "currency": "GBP",
-        "currency_label": "🇬🇧 GBP",
-        "event": "GDP m/m",
-        "impact": "High",
-        "forecast": "0.1%",
-        "previous": "0.4%",
-    },
-    {
-        "date": "Thu",
-        "time": "—",
-        "currency": "USD",
-        "currency_label": "🇺🇸 USD",
-        "event": "Unemployment Claims",
-        "impact": "High",
-        "forecast": "215K",
-        "previous": "221K",
-    },
-    {
-        "date": "Fri",
-        "time": "—",
-        "currency": "USD",
-        "currency_label": "🇺🇸 USD",
-        "event": "Core Retail Sales m/m",
-        "impact": "High",
-        "forecast": "0.4%",
-        "previous": "-0.6%",
-    },
-    {
-        "date": "Fri",
-        "time": "—",
-        "currency": "USD",
-        "currency_label": "🇺🇸 USD",
-        "event": "UoM Consumer Sentiment",
-        "impact": "High",
-        "forecast": "64.5",
-        "previous": "64.7",
-    },
+ 
+# ── Fallback Events (last resort if both feeds fail) ─────────
+FALLBACK_NEXT_WEEK = [
+    {"date": "Mon", "time": "—", "currency": "USD", "currency_label": "🇺🇸 USD", "event": "ISM Services PMI",           "impact": "High", "forecast": "—", "previous": "—"},
+    {"date": "Tue", "time": "—", "currency": "EUR", "currency_label": "🇪🇺 EUR", "event": "German ZEW Sentiment",       "impact": "High", "forecast": "—", "previous": "—"},
+    {"date": "Wed", "time": "—", "currency": "USD", "currency_label": "🇺🇸 USD", "event": "US CPI m/m",                 "impact": "High", "forecast": "—", "previous": "—"},
+    {"date": "Wed", "time": "—", "currency": "USD", "currency_label": "🇺🇸 USD", "event": "FOMC Meeting Minutes",       "impact": "High", "forecast": "—", "previous": "—"},
+    {"date": "Thu", "time": "—", "currency": "GBP", "currency_label": "🇬🇧 GBP", "event": "UK GDP m/m",                 "impact": "High", "forecast": "—", "previous": "—"},
+    {"date": "Thu", "time": "—", "currency": "USD", "currency_label": "🇺🇸 USD", "event": "Unemployment Claims",        "impact": "High", "forecast": "—", "previous": "—"},
+    {"date": "Fri", "time": "—", "currency": "USD", "currency_label": "🇺🇸 USD", "event": "Core Retail Sales m/m",      "impact": "High", "forecast": "—", "previous": "—"},
+    {"date": "Fri", "time": "—", "currency": "USD", "currency_label": "🇺🇸 USD", "event": "UoM Consumer Sentiment",     "impact": "High", "forecast": "—", "previous": "—"},
 ]
-
-
-# ---------------------------------------------------------------------------
-# HELPERS
-# ---------------------------------------------------------------------------
-
+ 
+FALLBACK_THIS_WEEK = []   # No fallback for verification — if feed fails, nothing gets flagged
+ 
+ 
+# ── Helpers ──────────────────────────────────────────────────
 def _parse_ff_datetime(raw: str) -> datetime | None:
-    """
-    Parse a ForexFactory datetime string.
-    FF uses ISO 8601 with a timezone offset, e.g. '2025-03-17T08:30:00-04:00'
-    Falls back gracefully if the format differs.
-    """
-    formats = [
-        "%Y-%m-%dT%H:%M:%S%z",   # standard ISO with offset
-        "%Y-%m-%dT%H:%M:%S",     # no timezone
-        "%m-%d-%Y",              # date only (older FF format)
-    ]
-    for fmt in formats:
+    for fmt in ["%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S", "%m-%d-%Y"]:
         try:
             return datetime.strptime(raw.strip(), fmt)
         except ValueError:
             continue
     return None
-
-
+ 
 def _format_day(dt: datetime | None) -> str:
-    """Return short day name, e.g. 'Mon', 'Tue'."""
-    if dt is None:
-        return "—"
-    return dt.strftime("%a")
-
-
+    return dt.strftime("%a") if dt else "—"
+ 
 def _format_time(dt: datetime | None) -> str:
-    """Return HH:MM in local time (no tz conversion — FF times are already local)."""
     if dt is None:
         return "—"
-    # If the datetime has no meaningful time component (midnight), return All Day
-    if dt.hour == 0 and dt.minute == 0:
-        return "All Day"
-    return dt.strftime("%H:%M")
-
-
+    return "All Day" if (dt.hour == 0 and dt.minute == 0) else dt.strftime("%H:%M")
+ 
 def _safe_text(element, tag: str) -> str:
-    """Safely extract text from an XML child element."""
     child = element.find(tag)
-    if child is not None and child.text:
-        return child.text.strip()
-    return "—"
-
-
-# ---------------------------------------------------------------------------
-# CORE FETCH & PARSE
-# ---------------------------------------------------------------------------
-
-def _fetch_xml(url: str) -> str | None:
-    """Fetch raw XML from a URL. Returns None on any error."""
+    return child.text.strip() if (child is not None and child.text) else "—"
+ 
+ 
+# ── Cache Config ─────────────────────────────────────────────
+# In-memory cache: prevents duplicate fetches within same run.
+# Disk cache: saves XML to .cache/ folder so repeated runs on
+# the same day reuse the saved file instead of hitting FF again.
+# Cache expires after CACHE_HOURS hours.
+import os, time, hashlib
+ 
+_XML_CACHE: dict = {}
+CACHE_DIR   = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cache")
+CACHE_HOURS = 4   # reuse cached XML for up to 4 hours
+ 
+ 
+def _cache_path(url: str) -> str:
+    """Return a filesystem path for caching a given URL."""
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    key = hashlib.md5(url.encode()).hexdigest()
+    return os.path.join(CACHE_DIR, f"ff_{key}.xml")
+ 
+ 
+def _load_disk_cache(url: str) -> str | None:
+    """Return cached XML if it exists and is less than CACHE_HOURS old."""
+    path = _cache_path(url)
+    if os.path.exists(path):
+        age_hours = (time.time() - os.path.getmtime(path)) / 3600
+        if age_hours < CACHE_HOURS:
+            logging.info(f"[calendar_data] Using disk cache ({age_hours:.1f}h old) for {url}")
+            return open(path, encoding="utf-8").read()
+    return None
+ 
+ 
+def _save_disk_cache(url: str, xml: str) -> None:
+    """Save fetched XML to disk cache."""
     try:
-        response = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
-        response.raise_for_status()
-        return response.text
-    except requests.RequestException as e:
-        logging.warning(f"[calendar_data] Failed to fetch {url}: {e}")
-        return None
-
-
+        open(_cache_path(url), "w", encoding="utf-8").write(xml)
+    except Exception as e:
+        logging.warning(f"[calendar_data] Could not save disk cache: {e}")
+ 
+ 
+# ── Core Fetch ───────────────────────────────────────────────
+def _fetch_xml(url: str) -> str | None:
+    # 1. In-memory cache (same process)
+    if url in _XML_CACHE:
+        logging.info(f"[calendar_data] Using in-memory cache for {url}")
+        return _XML_CACHE[url]
+ 
+    # 2. Disk cache (across runs on the same day)
+    cached = _load_disk_cache(url)
+    if cached:
+        _XML_CACHE[url] = cached
+        return cached
+ 
+    # 3. Fetch from ForexFactory with one retry on 429
+    for attempt in range(2):
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
+            r.raise_for_status()
+            _XML_CACHE[url] = r.text
+            _save_disk_cache(url, r.text)
+            return r.text
+        except requests.exceptions.HTTPError as e:
+            if r.status_code == 429 and attempt == 0:
+                logging.warning(f"[calendar_data] 429 rate limited — waiting 15s before retry...")
+                time.sleep(15)
+                continue
+            logging.warning(f"[calendar_data] Failed to fetch {url}: {e}")
+            return None
+        except requests.RequestException as e:
+            logging.warning(f"[calendar_data] Failed to fetch {url}: {e}")
+            return None
+    return None
+ 
+ 
+# ── Core Parser ──────────────────────────────────────────────
 def _parse_events(xml_text: str) -> list[dict]:
     """
-    Parse a ForexFactory XML string and return a filtered list of event dicts.
-    Filters to G7 currencies and HIGH (+ optionally MEDIUM) impact only.
+    Parse FF XML and return filtered list of event dicts.
+    Each dict contains: date, time, currency, currency_label,
+    event, impact, forecast, previous, _dt (for sorting).
     """
     try:
         root = ET.fromstring(xml_text)
     except ET.ParseError as e:
         logging.error(f"[calendar_data] XML parse error: {e}")
         return []
-
+ 
     events = []
-
     for event in root.findall("event"):
-        # --- impact filter ---
         impact = _safe_text(event, "impact")
-        if impact == "Holiday":
-            continue
-        if impact == "Low":
+        if impact in ("Holiday", "Low"):
             continue
         if impact == "Medium" and not INCLUDE_MEDIUM:
             continue
-
-        # --- currency filter ---
+ 
         currency = _safe_text(event, "country")
         if currency not in G7_CURRENCIES:
             continue
-
-        # --- parse datetime ---
+ 
         raw_date = _safe_text(event, "date")
-        dt = _parse_ff_datetime(raw_date) if raw_date != "—" else None
-
-        title   = _safe_text(event, "title")
+        dt       = _parse_ff_datetime(raw_date) if raw_date != "—" else None
+        title    = _safe_text(event, "title")
         forecast = _safe_text(event, "forecast")
         previous = _safe_text(event, "previous")
-
-        # Blank forecast/previous → display dash
         forecast = forecast if forecast not in ("", "—", None) else "—"
         previous = previous if previous not in ("", "—", None) else "—"
-
+ 
         events.append({
             "date":           _format_day(dt),
             "time":           _format_time(dt),
@@ -274,105 +209,100 @@ def _parse_events(xml_text: str) -> list[dict]:
             "impact":         impact,
             "forecast":       forecast,
             "previous":       previous,
-            # Keep raw dt for sorting
             "_dt":            dt,
         })
-
-    # Sort chronologically (None datetimes go last)
+ 
     events.sort(key=lambda e: (e["_dt"] is None, e["_dt"] or datetime.max))
-
-    # Remove internal sort key before returning
     for e in events:
         e.pop("_dt", None)
-
+ 
     return events
-
-
-# ---------------------------------------------------------------------------
-# PUBLIC API
-# ---------------------------------------------------------------------------
-
-def get_economic_calendar() -> list[dict]:
+ 
+ 
+# ── Public: Next Week Events (for report calendar section) ───
+def get_next_week_events() -> list[dict]:
     """
-    Main entry point. Returns a list of dicts for next week's high-impact
-    G7 economic events, falling back gracefully at each stage.
-
-    Each dict contains:
-        date           — short day name, e.g. 'Mon'
-        time           — HH:MM or 'All Day'
-        currency       — e.g. 'USD'
-        currency_label — e.g. '🇺🇸 USD'
-        event          — event title
-        impact         — 'High' or 'Medium'
-        forecast       — analyst estimate or '—'
-        previous       — prior reading or '—'
+    Returns high-impact G7 events for next week.
+    Used by report.py for the "Key Events Next Week" section.
+ 
+    Tries nextweek feed first (live from Friday onwards),
+    falls back to thisweek feed mid-week, then hardcoded list.
     """
-
-    # --- 1. Try next week's feed ---
-    logging.info("[calendar_data] Fetching next week's ForexFactory XML feed...")
+    logging.info("[calendar_data] Fetching next week events...")
+ 
     xml = _fetch_xml(FEED_NEXT_WEEK)
-
     if xml:
         events = _parse_events(xml)
         if events:
-            logging.info(f"[calendar_data] Got {len(events)} events from next week feed.")
+            logging.info(f"[calendar_data] Next week: {len(events)} events from nextweek feed.")
             return events
-        else:
-            logging.warning("[calendar_data] Next week feed returned no matching events.")
-
-    # --- 2. Fall back to this week's feed ---
-    logging.info("[calendar_data] Falling back to this week's ForexFactory XML feed...")
+ 
+    logging.warning("[calendar_data] nextweek feed unavailable — trying thisweek feed.")
     xml = _fetch_xml(FEED_THIS_WEEK)
-
     if xml:
         events = _parse_events(xml)
         if events:
-            logging.info(f"[calendar_data] Got {len(events)} events from this week feed.")
+            logging.info(f"[calendar_data] Next week: {len(events)} events from thisweek feed (fallback).")
             return events
-        else:
-            logging.warning("[calendar_data] This week feed returned no matching events.")
-
-    # --- 3. Final fallback — hardcoded placeholder list ---
-    logging.warning("[calendar_data] Both feeds failed. Using hardcoded fallback events.")
-    return FALLBACK_EVENTS
-
-
-# ---------------------------------------------------------------------------
-# STANDALONE TEST
-# Run: python3 calendar_data.py
-# ---------------------------------------------------------------------------
-
+ 
+    logging.warning("[calendar_data] Both feeds failed — using hardcoded fallback.")
+    return FALLBACK_NEXT_WEEK
+ 
+ 
+# ── Public: This Week Events (for macro verification) ────────
+def get_this_week_events() -> list[dict]:
+    """
+    Returns high-impact G7 events that occurred this week (Mon–Fri).
+    Used by macro_data.py to verify which economic releases
+    genuinely happened before flagging FRED series as released.
+ 
+    Only uses thisweek feed — no fallback, because if the feed
+    is unavailable we should not falsely flag any FRED series.
+    Returns empty list on failure (safe default = nothing flagged).
+    """
+    logging.info("[calendar_data] Fetching this week events for macro verification...")
+ 
+    xml = _fetch_xml(FEED_THIS_WEEK)
+    if xml:
+        events = _parse_events(xml)
+        logging.info(f"[calendar_data] This week: {len(events)} events for macro verification.")
+        return events
+ 
+    logging.warning("[calendar_data] thisweek feed unavailable — no events flagged for macro.")
+    return FALLBACK_THIS_WEEK
+ 
+ 
+# ── Convenience: Get Both Feeds at Once ─────────────────────
+def get_all_calendar_data() -> dict:
+    """
+    Fetches both feeds in one call. Returns:
+    {
+        "next_week": [...],   # for report calendar section
+        "this_week": [...],   # for macro_data verification
+    }
+    Useful when both are needed (e.g. in report.py) to avoid
+    fetching the thisweek feed twice.
+    """
+    this_week = get_this_week_events()
+    next_week = get_next_week_events()
+    return {"this_week": this_week, "next_week": next_week}
+ 
+ 
+# ── Standalone Test ──────────────────────────────────────────
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-
-    print("\n=== G7 Economic Calendar — Next Week ===\n")
-    calendar = get_economic_calendar()
-
-    if not calendar:
-        print("No events returned.")
-    else:
-        col_w = [5, 8, 12, 35, 8, 10, 10]
-        header = (
-            f"{'Day':<{col_w[0]}} "
-            f"{'Time':<{col_w[1]}} "
-            f"{'Currency':<{col_w[2]}} "
-            f"{'Event':<{col_w[3]}} "
-            f"{'Impact':<{col_w[4]}} "
-            f"{'Forecast':<{col_w[5]}} "
-            f"{'Previous':<{col_w[6]}}"
-        )
-        print(header)
-        print("-" * len(header))
-
-        for ev in calendar:
-            print(
-                f"{ev['date']:<{col_w[0]}} "
-                f"{ev['time']:<{col_w[1]}} "
-                f"{ev['currency_label']:<{col_w[2]}} "
-                f"{ev['event']:<{col_w[3]}} "
-                f"{ev['impact']:<{col_w[4]}} "
-                f"{ev['forecast']:<{col_w[5]}} "
-                f"{ev['previous']:<{col_w[6]}}"
-            )
-
-    print(f"\nTotal events: {len(calendar)}")
+ 
+    data = get_all_calendar_data()
+ 
+    for section, label in [("this_week", "THIS WEEK (macro verification)"),
+                            ("next_week", "NEXT WEEK (report calendar)")]:
+        print(f"\n{'='*55}")
+        print(f" {label}")
+        print(f"{'='*55}")
+        events = data[section]
+        if not events:
+            print("  No events.")
+        else:
+            for ev in events:
+                print(f"  {ev['date']} {ev['time']:8} {ev['currency_label']:10} {ev['event']:35} {ev['impact']:6} F:{ev['forecast']:8} P:{ev['previous']}")
+        print(f"  Total: {len(events)} events")
