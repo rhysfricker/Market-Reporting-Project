@@ -19,7 +19,7 @@ from indicators import calculate_indicators, calculate_pivot_points, format_pric
 from macro_data import fetch_all_macro, get_this_weeks_releases, val
 from news_data import fetch_all_news, get_top_headlines, format_section_headlines
 from config import instruments
-from calendar_data import get_all_calendar_data
+from calendar_data import get_this_week_events
 import ssl
 import certifi
 ssl._create_default_https_context = lambda: ssl.create_default_context(cafile=certifi.where())
@@ -132,12 +132,43 @@ def get_bias(latest, prev):
  
  
 # ── Helper: Get Weekly Price Change ──────────────────────────
+# Calculates Friday close → Friday close weekly change, matching
+# what Yahoo Finance shows as the 5-day change.
+# yfinance includes Sunday overnight sessions as extra rows for
+# futures tickers (ES=F, NQ=F etc), which would push iloc[-6] onto
+# Sunday instead of the prior Friday. We strip Sunday rows only
+# for this calculation — the raw df passed in is left untouched.
 def get_weekly_change(df):
     try:
+        import pandas as pd
+
+        # Flatten MultiIndex columns (yfinance quirk with some tickers)
+        if isinstance(df.columns, pd.MultiIndex):
+            df = df.copy()
+            df.columns = df.columns.get_level_values(0)
+
+        df = df.dropna(subset=["Close"])
+        if df.empty:
+            return None
+
+        # Normalise index to tz-naive for consistent weekday detection
+        idx = pd.to_datetime(df.index)
+        if idx.tz is not None:
+            idx = idx.tz_convert("America/New_York").tz_localize(None)
+        df = df.copy()
+        df.index = idx
+
+        # Drop Sunday rows only — keeps all Mon-Fri sessions intact
+        # so iloc[-1] = this Friday, iloc[-6] = prior Friday, always
+        df = df[df.index.dayofweek != 6]
+
+        if len(df) < 6:
+            return None
+
         close_now  = float(df["Close"].iloc[-1])
         close_week = float(df["Close"].iloc[-6])
-        change     = round(((close_now - close_week) / close_week) * 100, 2)
-        return change
+        return round(((close_now - close_week) / close_week) * 100, 2)
+
     except Exception:
         return None
  
@@ -163,7 +194,12 @@ CRITICAL DATA RULES — READ FIRST:
    without naming the cause (e.g. "following US-Israeli strikes on Iran and the Strait of Hormuz closure").
 9. Headlines tagged [Geopolitical] or [Breaking News] are the highest priority — if they explain a
    market move, they MUST be referenced. Do not bury or omit them.
- 
+10. Headlines are split into WEEKDAY (Mon-Fri) and WEEKEND (Sat-Sun) sections.
+    WEEKDAY headlines happened while markets were open — use these to explain market moves.
+    WEEKEND headlines happened AFTER markets closed — they did NOT cause this week's price action.
+    NEVER cite a weekend headline as the reason for a market move this week.
+    Weekend headlines may only be mentioned as forward-looking context (e.g. "looking ahead...").
+
 WRITING RULES:
 8. Structure every point as: [what happened] → [which market moved] → [why it moved]
 9. Plain English only — if you use a financial term, explain it briefly in brackets
@@ -200,25 +236,41 @@ def build_executive_summary(macro, releases, news, all_data):
             parts.append("Japan: " + " | ".join(releases["jp"]))
         released_txt = "\n".join(parts)
     else:
-        us = macro["us"]
-        released_txt = (
-            f"- US Jobs: {val(us.get('nonfarm_payrolls'))}k | "
-            f"Unemployment: {val(us.get('unemployment'))}% | "
-            f"CPI: {val(us.get('cpi_yoy'))}% | "
-            f"Fed Rate: {val(us.get('fed_funds_rate'))}%"
-        )
+        released_txt = "No major data confirmed released this week."
  
     prompt = f"""{SYSTEM_CONTEXT}
  
 REMINDER: Base your writing ONLY on the market moves, data, and headlines listed below.
 Do not add any events, figures, or context not explicitly provided.
 If a [Geopolitical] or [Breaking News] headline explains market moves this week, name it explicitly.
+
+NO FABRICATION RULES:
+- Do NOT add context, reasons, or commentary beyond what the data and headlines explicitly show.
+- Do NOT speculate about what might happen or what investors were thinking.
+- If insufficient data exists to write 4 sentences, write fewer.
+
+CENTRAL BANK RATE RULE — CRITICAL:
+- Do NOT mention the Fed funds rate or any interest rate figure UNLESS a Fed decision or FOMC
+  announcement appears in the "Released this week" section below.
+- Rates that did not change this week are not news and must not appear in the narrative.
+
+INFLATION DATA RULES — CRITICAL:
+- CPI and Core PCE are TWO DIFFERENT measures. NEVER conflate them.
+- If referencing inflation, state which measure it is: "CPI came in at X%" or "Core PCE stood at Y%".
+- Do NOT blend or average these two figures.
  
 Write an executive summary for this week's market report. Maximum 4 sentences.
-Start with the single most important story of the week — if it is a geopolitical event, name it.
+Start with the single most important story of the week.
+Use WEEKDAY headlines only to explain market moves — weekend headlines did NOT drive this week's price action.
+
+OIL MOVE RULE — CRITICAL: If oil moved more than 3% this week, the cause MUST be named explicitly
+from the geopolitical/energy headlines. The cause of large oil moves is ALWAYS military conflict,
+supply disruption, blockades, or sanctions — NEVER sports events, weather, or unrelated news.
+Do NOT cite sports cancellations (F1, football, Olympics etc.) as explanations for oil price moves.
+Scan [Geopolitical], [Breaking News], [Middle East] and [Energy] headlines for the real cause.
+
 Use the format: X happened → markets did Y → because Z.
-Weave in the most market-moving headline naturally if relevant.
-End with the biggest risk to watch next week.
+End with the biggest risk to watch next week based only on headlines and data provided.
  
 Headlines available this week (geopolitical/breaking listed first — use if market-moving):
 {headlines_txt}
@@ -249,10 +301,11 @@ def build_us_narrative(macro, releases, news, all_data):
  
     # Split into released this week vs background context
     released_us = releases["us"]
+    # Only pass data that genuinely moved this week
+    # Yield moves daily so reflects this week's action — include it
+    # Yield spread is a standing calculated value — excluded
     background = [
-        f"Fed Rate: {val(us.get('fed_funds_rate'))}%",
-        f"10yr Yield: {val(us.get('yield_10yr'))}%",
-        f"Yield spread: {val(us.get('yield_spread'))}% ({'normal' if (val(us.get('yield_spread')) or 0) > 0 else 'inverted — recession warning'})",
+        f"10yr Yield: {val(us.get('yield_10yr'))}% (only mention if bond markets moved this week)",
     ]
  
     prompt = f"""{SYSTEM_CONTEXT}
@@ -261,11 +314,39 @@ REMINDER: Base your writing ONLY on the market moves, data, and headlines listed
 Do not add any events, figures, or context not explicitly provided.
 If a [Geopolitical] or [Breaking News] headline is driving US market moves, name it explicitly — not just its effect.
 If an [Earnings] headline moved equity indices this week, include it.
- 
-Write the US Economy section. 3 short paragraphs. Each = one key story this week.
+
+NO FABRICATION RULES:
+- Do NOT speculate about future Fed policy, rate cuts, or rate hikes unless a headline explicitly states this.
+- Do NOT invent reasons markets moved beyond what the headlines and data show.
+- Do NOT add context about "investors worried about X" unless a headline says so.
+- If insufficient data exists to write 3 paragraphs, write fewer — do not pad.
+
+CENTRAL BANK RATE RULE — CRITICAL:
+- Do NOT mention the Fed funds rate or any interest rate figure UNLESS a Fed/FOMC decision appears
+  in the "Released this week" section below — meaning a rate decision actually happened this week.
+- Rates that did not change this week are not news and must not appear in the narrative.
+
+INFLATION DATA RULES — CRITICAL:
+- CPI (Consumer Price Index) and Core PCE (Personal Consumption Expenditures) are TWO DIFFERENT measures.
+- CPI is the BLS headline inflation figure — what consumers pay for goods and services.
+- Core PCE is the Fed's preferred inflation gauge — it strips out food and energy and uses different weights.
+- NEVER present the Core PCE figure as a CPI figure or vice versa.
+- If both are in the data below, name each explicitly: "CPI came in at X%" and "Core PCE, the Fed's preferred gauge, stood at Y%".
+- Do NOT blend, average, or confuse these two numbers.
+
+GDP WORDING RULE — CRITICAL:
+- The US GDP figure provided below IS ALREADY AN ANNUALISED RATE. Use it exactly as given.
+- NEVER multiply it by 4 or any other number — it is not a raw quarterly figure.
+- ALWAYS write it as "the economy grew at an annualised rate of X%" using the exact number provided.
+- NEVER write "X% quarter-over-quarter", "X% quarterly growth", or derive any other figure from it.
+- Example: if the data shows X%, write "grew at an annualised rate of X%" — do NOT write X*4%, do NOT derive any other figure.
+
+Write the US Economy section. 3 short paragraphs using WEEKDAY headlines only for market moves.
 Format: [news event] → [US market that reacted] → [why it reacted]
 Only mention data figures if they were released this week and caused a market move.
 Weave in specific headlines naturally where they explain a market move — do not list them.
+If WEEKEND headlines contain market-relevant news, add one brief sentence at the end noting
+what traders should watch on Monday's open — but do NOT attribute any of this week's moves to them.
  
 Available headlines (geopolitical/breaking listed first):
 {headlines}
@@ -298,34 +379,47 @@ def build_europe_narrative(macro, releases, news, all_data):
     ])
  
     released_eu = releases["eu"]
-    background = [
-        f"ECB Rate: {val(eu.get('ecb_rate'))}%",
-        f"BoE Rate: {val(eu.get('boe_rate'))}%",
-        f"EZ Inflation: {val(eu.get('ez_cpi'))}%",
-        f"UK Inflation: {val(eu.get('uk_cpi'))}%",
-    ]
- 
+    # Only pass CPI figures if they were actually released this week
+    # Standing inflation figures are not news and must not appear in narrative
+    background = []
+    if eu.get("ez_cpi", {}).get("released_this_week"):
+        background.append(f"EZ CPI released this week: {val(eu.get('ez_cpi'))}% YoY")
+    if eu.get("uk_cpi", {}).get("released_this_week"):
+        background.append(f"UK CPI released this week: {val(eu.get('uk_cpi'))}% YoY")
+
     prompt = f"""{SYSTEM_CONTEXT}
- 
+
 REMINDER: Base your writing ONLY on the market moves, data, and headlines listed below.
 Do not add any events, figures, or context not explicitly provided.
 If a [Geopolitical] or [Breaking News] headline is driving European market moves, name it explicitly.
-[Central Banks] headlines about ECB or BoE decisions must be included if present — they directly move EUR and GBP.
- 
+
+CENTRAL BANK RATE RULE — CRITICAL:
+- Do NOT mention the BoE Bank Rate, ECB rate, or any central bank rate UNLESS it appears
+  in the "Released this week" section below — meaning a rate decision actually happened this week.
+- If no rate decision is listed, do NOT reference any central bank rate at all.
+- This is a weekly report. Rates that did not change this week are not news.
+
+NO FABRICATION RULES:
+- Do NOT invent reasons, speculation, or context not present in the headlines or data below.
+- Do NOT reference government policy, energy bill interventions, or political decisions
+  unless they appear explicitly in a headline provided.
+- If insufficient data exists to write 3 paragraphs, write fewer.
+
 Write the Europe & UK section. Cover Eurozone AND UK separately — they often move differently.
-3 short paragraphs. Format: [news event] → [which market moved] → [why]
+3 short paragraphs using WEEKDAY headlines only for market moves. Format: [news event] → [which market moved] → [why]
 Weave in specific headlines naturally where they explain a market move — do not list them.
- 
+If WEEKEND headlines contain market-relevant news, add one brief sentence at the end noting what to watch on Monday's open.
+
 Available headlines (geopolitical/breaking listed first):
 {headlines}
- 
+
 Market moves this week:
 {changes_txt}
- 
+
 Released this week (USE THESE — confirmed this week's data):
 {chr(10).join(released_eu) if released_eu else 'No major EU/UK releases confirmed this week'}
- 
-Background context (only mention if directly relevant):
+
+Background context (only mention if directly relevant to explaining a move):
 {chr(10).join(background)}"""
     return call_claude(prompt, max_tokens=500)
  
@@ -347,34 +441,48 @@ def build_japan_narrative(macro, releases, news, all_data):
     ])
  
     released_jp = releases["jp"]
+    # BoJ rate removed from background — only mention if a decision happened this week
+    # Japan CPI only in background if released this week — otherwise remove it
     background = [
-        f"BoJ Rate: {val(jp.get('boj_rate'))}%",
-        f"Japan CPI: {val(jp.get('japan_cpi'))}%",
+        f"Japan CPI: {val(jp.get('japan_cpi'))}% (only mention if in Released this week above)"
+        if jp.get('japan_cpi') and macro.get('jp',{}).get('japan_cpi',{}).get('released_this_week')
+        else ""
     ]
- 
+    background = [b for b in background if b]  # remove empty strings
+
     prompt = f"""{SYSTEM_CONTEXT}
- 
+
 REMINDER: Base your writing ONLY on the market moves, data, and headlines listed below.
 Do not add any events, figures, or context not explicitly provided.
 If a [Geopolitical] or [Breaking News] headline is affecting the Nikkei or Yen, name it explicitly.
-[Central Banks] headlines about the BoJ must be included if present — BoJ rate decisions move the Yen globally.
- 
-Write the Japan section. 2 short paragraphs.
+
+CENTRAL BANK RATE RULE — CRITICAL:
+- Do NOT mention the BoJ rate or any interest rate UNLESS it appears in the "Released this week"
+  section below — meaning a BoJ rate decision actually happened this week.
+- If no BoJ decision is listed, do NOT reference the BoJ rate at all.
+- You MAY briefly explain the yen carry trade concept if it helps explain a yen move, but only
+  reference it as a general mechanism — do not state a specific rate figure.
+
+NO FABRICATION RULES:
+- Do NOT invent reasons, speculation, or context beyond what the headlines and data below show.
+- Do NOT reference corporate earnings, export demand, or economic outlook unless a headline says so.
+- If insufficient data exists to write 2 paragraphs, write one.
+
+Write the Japan section. 2 short paragraphs using WEEKDAY headlines only for market moves.
 Format: [news event] → [Nikkei or Yen reaction] → [why]
-If relevant, explain the Yen carry trade simply:
-(investors borrow cheap Yen to invest elsewhere — if BoJ raises rates, this unwinds and hits global markets)
 Weave in specific headlines naturally where they explain a market move — do not list them.
- 
+If WEEKEND headlines contain market-relevant news, add one brief sentence noting what to watch on Monday.
+
 Available headlines (geopolitical/breaking listed first):
 {headlines}
- 
+
 Japan market moves this week:
 {changes_txt}
- 
+
 Released this week (USE THESE — confirmed this week's data):
 {chr(10).join(released_jp) if released_jp else 'No major Japan releases confirmed this week'}
- 
-Background context (only mention if directly relevant):
+
+Background context (only mention if directly relevant to explaining a move):
 {chr(10).join(background)}"""
     return call_claude(prompt, max_tokens=400)
  
@@ -384,7 +492,7 @@ def build_commodities_narrative(macro, news, all_data):
     print("  Writing commodities narrative...")
     # Commodities: geopolitical first (wars, sanctions, Hormuz closures drive oil)
     # then energy/supply-demand feeds (OPEC, shipping, production data)
-    headlines = format_section_headlines(news, "commodities", limit=20)
+    headlines = format_section_headlines(news, "commodities", limit=30)
     commodities = {}
     for name, ticker in [("Gold","GC=F"),("Silver","SI=F"),("Oil","CL=F")]:
         if ticker in all_data:
@@ -407,16 +515,30 @@ def build_commodities_narrative(macro, news, all_data):
 REMINDER: Base your writing ONLY on the commodity prices, moves, and headlines listed below.
 Do not add any events, figures, or context not explicitly provided.
  
-COMMODITY-SPECIFIC RULES:
-- If a [Geopolitical] or [Breaking News] headline explains an oil or gold price move, NAME IT EXPLICITLY.
-  Do not write "oil surged" without stating the cause (e.g. "following the closure of the Strait of Hormuz").
-- If an [Energy] headline covers supply disruption, OPEC cuts, or shipping blockades, use it to explain price moves.
-- Gold moves often reflect investor fear — if a geopolitical event is driving gold, say so explicitly.
- 
-Write the Commodities section. 2 short paragraphs.
+COMMODITY-SPECIFIC RULES — CRITICAL:
+- Any oil price move above 3% in a week is ALWAYS caused by a supply disruption, geopolitical shock,
+  or major demand shift. You MUST name the specific event from the headlines.
+- Scan ALL headlines — [Geopolitical], [Breaking News], [Middle East], [Energy] — for the cause.
+- If headlines mention military strikes on oil infrastructure, a war, a naval blockade, or sanctions
+  on an oil-producing country — that IS the cause. Name the specific location/event: e.g.
+  "US strikes on Iran's Kharg Island" or "closure of the Strait of Hormuz". Be specific.
+- Do NOT write vague phrases like "geopolitical tensions" or "regional concerns" without naming the event.
+- Do NOT cite sports events (F1, football etc.), weather, or unrelated news as oil price drivers.
+- NEVER say the cause is unclear if [Geopolitical] or [Middle East] headlines are present.
+- Gold moves often reflect investor fear — if a geopolitical event is in the headlines, connect it explicitly.
+
+NO FABRICATION RULES:
+- Do NOT invent supply/demand explanations not present in the headlines.
+- Do NOT speculate about what investors were thinking unless a headline states it.
+- Only reference price implications (e.g. petrol costs) if directly supported by the price data provided.
+- NEVER say a price move had "no clear cause" or "no explanation" if there are geopolitical or Middle East
+  headlines in the list above — those ARE the cause for commodity price moves. Connect them.
+
+Write the Commodities section. 2 short paragraphs using WEEKDAY headlines only for market moves.
 Format: [named news event or supply/demand driver] → [commodity price move] → [what it means for ordinary people]
 Connect to real life — e.g. oil rising means petrol costs more, gold rising means investors are nervous.
 Weave in specific headlines naturally where they explain a price move — do not list them.
+If WEEKEND headlines contain market-relevant news, add one brief sentence noting what to watch on Monday.
  
 Available headlines (geopolitical/breaking listed first, then supply/demand):
 {headlines}
@@ -451,6 +573,7 @@ def build_technical_narrative(all_data):
  
 REMINDER: Base your writing ONLY on the technical readings listed below.
 Do not reference any news events, macro data, or context not explicitly provided.
+Do NOT output any heading, title or label like "Technical Analysis" — start directly with the first paragraph.
  
 Write the Technical Analysis section. 3 short paragraphs:
  
@@ -465,8 +588,9 @@ Para 2: The 2-3 most interesting signals this week.
  
 Para 3: What the charts suggest for next week.
         Which instruments look strongest? Weakest?
-        What price levels are most important to watch?
- 
+        ONLY reference price levels that appear in the current readings below (e.g. S1/R1 from pivot points).
+        Do NOT invent or estimate price levels not present in the data.
+
 Current readings:
 {signals_txt}"""
     return call_claude(prompt, max_tokens=500)
@@ -517,25 +641,6 @@ def bias_row(inst, all_data):
         return ""
  
  
-# ── HTML: Events Calendar ─────────────────────────────────────
-def events_html(next_week_events):
-    rows = ""
-    for ev in next_week_events:
-        impact_col = "#e74c3c" if ev["impact"] == "High" else "#c9a84c"
-        forecast   = ev.get("forecast", "—")
-        previous   = ev.get("previous", "—")
-        rows += f"""<tr>
-            <td>{ev['date']}</td>
-            <td style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--gold)">{ev['time']}</td>
-            <td>{ev['currency_label']}</td>
-            <td>{ev['event']}</td>
-            <td><span style="color:{impact_col};font-weight:600">{ev['impact']}</span></td>
-            <td style="font-family:'IBM Plex Mono',monospace;font-size:12px">{forecast}</td>
-            <td style="font-family:'IBM Plex Mono',monospace;font-size:12px">{previous}</td>
-        </tr>"""
-    return rows
- 
- 
 # ── HTML: Narrative Paragraphs ────────────────────────────────
 def narrative_html(text):
     lines = []
@@ -561,8 +666,8 @@ def build_report():
     all_data = fetch_all_data()
  
     print("\n[2/6] Fetching calendar & macro data...")
-    calendar = get_all_calendar_data()
-    macro    = fetch_all_macro(calendar["this_week"])
+    this_week = get_this_week_events()
+    macro    = fetch_all_macro(this_week)
     releases = get_this_weeks_releases(macro)
  
     print("\n[3/6] Fetching news headlines...")
@@ -838,19 +943,7 @@ body{{background:var(--navy);color:var(--text);font-family:'Source Sans 3',sans-
     </div>
 </div>
  
-<div class="section">
-    <div class="section-eyebrow">Looking Ahead</div>
-    <h2 class="section-title">📅 Key Events Next Week</h2>
-    <div class="section-rule"></div>
-    <table class="events-table">
-    <thead><tr>
-        <th>Day</th><th>Time</th><th>Currency</th>
-        <th>Event</th><th>Impact</th><th>Forecast</th><th>Previous</th>
-    </tr></thead>
-        <tbody>{events_html(calendar["next_week"])}</tbody>
-    </table>
-</div>
- 
+
 </div>
  
 <div class="report-footer">

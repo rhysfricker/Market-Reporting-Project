@@ -1,58 +1,61 @@
 # ============================================================
-# macro_data.py  —  G7 Weekly Market Report
+# macro_data.py  --  G7 Weekly Market Report
 #
 # Fetches macroeconomic data for the report's macro sections.
 # Returns DataPoint dicts:  { value, date, released_this_week }
 #
 # FRED SERIES STATUS (verified March 2026):
-#   ✅ DFEDTARU          — Fed Funds upper target  (live, Mar 2026)
-#   ✅ CPIAUCNS           — US CPI index NSA        (live, Feb 2026)
-#   ✅ PCEPILFE           — Core PCE index          (live, Feb 2026)
-#   ✅ UNRATE             — US Unemployment         (live, Feb 2026)
-#   ✅ PAYEMS             — US NFP                  (live, Feb 2026)
-#   ✅ A191RL1Q225SBEA    — US GDP QoQ              (live, Q4 2025)
-#   ✅ INDPRO             — Industrial Production   (live, Jan 2026)
-#   ✅ TCU                — Capacity Utilization    (live, Jan 2026)
-#   ✅ DGS10 / DGS2       — Treasury yields         (live, daily)
-#   ✅ ECBDFR             — ECB Deposit Rate        (live, Mar 2026)
-#   ✅ IUDSOIA            — BoE Bank Rate           (live, Mar 2026)
-#   ✅ CP0000EZ19M086NEST — EA HICP index (26-char) (live, Dec 2025)
-#                          → must compute YoY manually (units=pc1 rejected)
-#   ✅ CLVMNACSCAB1GQEA19 — EZ GDP index            (live, Q3 2025)
-#   ⛔ LRHUTTTTEZM156S   — EZ Unemployment OECD    DEAD Jan 2023
-#   ⛔ EURUNEMPEA20       — EZ Unemployment Eurostat DOES NOT EXIST on FRED
-#      → use Eurostat JSON API (no key needed), fallback to hardcoded
-#   ✅ NGDPRSAXDCGBQ      — UK GDP index            (live, Q3 2025)
-#   ✅ LRHUTTTTGBM156S    — UK Unemployment         (live, Oct 2025)
-#   ✅ DEBTTLGBA188A      — UK Debt/GDP             (live, 2024)
-#   ⛔ GBRCPIALLMINMEI   — UK CPI OECD index       STALE Mar 2025
-#      → fetch directly from ONS API (no key required), series D7G7
-#   ✅ IRSTCI01JPM156N    — BoJ Policy Rate         (live, Jan 2026)
-#   ⛔ JPNCPIALLMINMEI   — Japan CPI OECD index    DEAD Jun 2021
-#      → fetch from Japan e-Stat API (no key required), fallback to hardcoded
-#   ✅ JPNRGDPEXP         — Japan GDP               (live, Q3 2025)
-#   ✅ XTIMVA01JPM667S    — Japan Trade Balance     (live, Dec 2025)
-#   ✅ LRUNTTTTJPM156S    — Japan Unemployment      (live, Dec 2025)
+#   OK DFEDTARU          -- Fed Funds upper target  (live, Mar 2026)
+#   OK CPIAUCNS           -- US CPI index NSA        (live, Feb 2026)
+#   OK PCEPILFE           -- Core PCE index          (live, Feb 2026)
+#   OK UNRATE             -- US Unemployment         (live, Feb 2026)
+#   OK PAYEMS             -- US NFP                  (live, Feb 2026)
+#   OK A191RL1Q225SBEA    -- US GDP QoQ              (live, Q4 2025)
+#   OK INDPRO             -- Industrial Production   (live, Jan 2026)
+#   OK TCU                -- Capacity Utilization    (live, Jan 2026)
+#   OK DGS10 / DGS2       -- Treasury yields         (live, daily)
+#   OK ECBDFR             -- ECB Deposit Rate        (live, Mar 2026)
+#   OK IUDSOIA            -- BoE Bank Rate           (live, Mar 2026)
+#   OK CP0000EZ19M086NEST -- EA HICP index (26-char) (live, Dec 2025)
+#                          -> must compute YoY manually (units=pc1 rejected)
+#   OK CLVMNACSCAB1GQEA19 -- EZ GDP index            (live, Q3 2025)
+#   XX LRHUTTTTEZM156S   -- EZ Unemployment OECD    DEAD Jan 2023
+#   XX EURUNEMPEA20       -- EZ Unemployment Eurostat DOES NOT EXIST on FRED
+#      -> use Eurostat JSON API (no key needed), fails loudly if unavailable
+#   XX GBRCPIALLMINMEI   -- UK CPI OECD index       STALE Mar 2025
+#      -> fetch directly from ONS API (no key required), series D7G7
+#   OK IRSTCI01JPM156N    -- BoJ Overnight Call Rate  (live, Jan 2026)
+#      -> this is the overnight call rate, NOT the policy target
+#      -> snap to nearest 0.25% to get the policy rate (like BoE/SONIA)
+#   XX JPNCPIALLMINMEI   -- Japan CPI OECD index    DEAD Jun 2021
+#      -> multi-source: e-Stat API -> OECD SDMX API fallback
+#      -> set ESTAT_APP_ID env var for reliable e-Stat access
+#   OK JPNRGDPEXP         -- Japan GDP               (live, Q3 2025)
+#   OK XTEXVA01JPM667S    -- Japan Exports (OECD)    (live, Dec 2025)
+#   OK XTIMVA01JPM667S    -- Japan Imports (OECD)    (live, Dec 2025)
+#      -> trade balance = exports - imports (no single FRED series)
+#   XX LRUNTTTTJPM156S    -- Japan Unemployment OECD  lags e-Stat
+#      -> use e-Stat API table 0003005865 for latest unemployment rate
 # ============================================================
- 
+
 import os
 import requests
 from datetime import datetime, timedelta
 from fredapi import Fred
 import ssl, certifi
 ssl._create_default_https_context = lambda: ssl.create_default_context(cafile=certifi.where())
- 
+
 from dotenv import load_dotenv
 load_dotenv()
 FRED_API_KEY = os.getenv("FRED_API_KEY")
 fred = Fred(api_key=FRED_API_KEY)
- 
+
 from calendar_data import get_this_week_events
- 
+
 TODAY = datetime.today()
- 
- 
-# ── ForexFactory → FRED key mapping ──────────────────────────
+
+
+# -- ForexFactory -> FRED key mapping --
 FF_TO_FRED = {
     "fed_funds_rate":        {"currency": "USD", "keywords": ["fed funds", "fomc rate", "interest rate", "federal reserve rate", "ffr"]},
     "cpi_yoy":               {"currency": "USD", "keywords": ["cpi y/y", "cpi m/m", "consumer price index"], "exclude": ["core"]},
@@ -76,9 +79,9 @@ FF_TO_FRED = {
     "japan_trade":           {"currency": "JPY", "keywords": ["trade balance", "trade deficit", "trade surplus"]},
     "japan_unemployment":    {"currency": "JPY", "keywords": ["unemployment"]},
 }
- 
- 
-# ── Released-this-week set ─────────────────────────────────────
+
+
+# -- Released-this-week set --
 def _build_released_set(ff_events):
     released = set()
     for event in ff_events:
@@ -92,43 +95,55 @@ def _build_released_set(ff_events):
             if any(kw.lower() in title for kw in cfg["keywords"]):
                 if fred_key not in released:
                     released.add(fred_key)
-                    print(f"  ✅ FF verified release: {fred_key} ← '{event['event']}' ({event['date']})")
+                    print(f"  \u2705 FF verified release: {fred_key} \u2190 '{event['event']}' ({event['date']})")
     return released
- 
- 
-# ── DataPoint helpers ─────────────────────────────────────────
+
+
+# -- DataPoint helpers --
 def _dp(value, date, label, released):
     date_str = date.strftime("%b %Y") if hasattr(date, "strftime") else str(date)
-    flag = "🆕" if released else "  "
+    flag = "\U0001f195" if released else "  "
     print(f"  {flag} {label}: {value} ({date_str})")
     return {"value": value, "date": date_str, "released_this_week": released}
- 
+
 def _fail(label):
-    print(f"  ✗ {label}: Failed — no data available")
+    print(f"  \u2717 {label}: Failed -- no data available")
     return {"value": None, "date": None, "released_this_week": False}
- 
- 
-# ── FRED: latest value ────────────────────────────────────────
+
+def _quarter_date(dp):
+    """Convert a DataPoint's date from 'Oct 2025' -> 'Q4 2025'.
+    FRED quarterly GDP series use the first month of the quarter as the date,
+    which causes the AI to write 'in October' instead of 'in Q4'."""
+    try:
+        dt = datetime.strptime(dp["date"], "%b %Y")
+        q = (dt.month - 1) // 3 + 1
+        dp["date"] = f"Q{q} {dt.year}"
+    except Exception:
+        pass
+    return dp
+
+
+# -- FRED: latest value --
 def get_latest(series_id, label, released=False):
     try:
         s = fred.get_series(series_id).dropna()
         return _dp(round(float(s.iloc[-1]), 2), s.index[-1], label, released)
     except Exception as e:
-        print(f"  ✗ {label}: Failed — {e}")
+        print(f"  \u2717 {label}: Failed -- {e}")
         return _fail(label)
- 
- 
-# ── FRED: YoY via units=pc1 ───────────────────────────────────
+
+
+# -- FRED: YoY via units=pc1 --
 def get_yoy_change(series_id, label, released=False):
     try:
         s = fred.get_series(series_id, units="pc1").dropna()
         return _dp(round(float(s.iloc[-1]), 2), s.index[-1], label, released)
     except Exception as e:
-        print(f"  ✗ {label}: Failed — {e}")
+        print(f"  \u2717 {label}: Failed -- {e}")
         return _fail(label)
- 
- 
-# ── FRED: Manual YoY from raw index ──────────────────────────
+
+
+# -- FRED: Manual YoY from raw index --
 # Use when series ID > 25 chars (units=pc1 fails on long IDs)
 def get_yoy_manual(series_id, label, released=False):
     try:
@@ -146,31 +161,24 @@ def get_yoy_manual(series_id, label, released=False):
         yoy = round((float(latest_val) / float(prior_val) - 1) * 100, 2)
         return _dp(yoy, latest_date, label, released)
     except Exception as e:
-        print(f"  ✗ {label}: Failed — {e}")
+        print(f"  \u2717 {label}: Failed -- {e}")
         return _fail(label)
- 
- 
-# ── FRED: Monthly change ──────────────────────────────────────
+
+
+# -- FRED: Monthly change --
 def get_monthly_change(series_id, label, divisor=1, released=False):
     try:
         s      = fred.get_series(series_id).dropna()
         change = round((float(s.iloc[-1]) - float(s.iloc[-2])) / divisor, 1)
         return _dp(change, s.index[-1], label, released)
     except Exception as e:
-        print(f"  ✗ {label}: Failed — {e}")
+        print(f"  \u2717 {label}: Failed -- {e}")
         return _fail(label)
- 
- 
-# ── UK CPI: ONS website JSON API (series D7G7 = CPI all items YoY %) ─
-# FRED GBRCPIALLMINMEI lags ~9 months behind ONS — DO NOT USE for YoY.
-# The ONS website exposes JSON by appending /data to the timeseries page URL.
-# Confirmed working URL:
-#   https://www.ons.gov.uk/economy/inflationandpriceindices/timeseries/d7g7/mm23/data
-# The old api.ons.gov.uk v0 endpoint is retired and returns 404.
+
+
+# -- UK CPI: ONS website JSON API (series D7G7 = CPI all items YoY %) --
 def get_uk_cpi(released=False):
     label = "UK CPI YoY %"
-    # Two URLs to try: primary is the www.ons.gov.uk /data endpoint,
-    # fallback is the api.beta.ons.gov.uk search endpoint.
     urls = [
         "https://www.ons.gov.uk/economy/inflationandpriceindices/timeseries/d7g7/mm23/data",
         "https://api.beta.ons.gov.uk/v1/datasets/mm23/timeseries/d7g7/data",
@@ -186,7 +194,6 @@ def get_uk_cpi(released=False):
             latest = months[-1]
             val = round(float(latest["value"]), 2)
             raw_date = latest.get("label", "")
-            # ONS label format: "2026 JAN"
             dt = TODAY
             for fmt in ("%Y %b", "%b %Y", "%Y-%m"):
                 try:
@@ -196,32 +203,184 @@ def get_uk_cpi(released=False):
                     pass
             return _dp(val, dt, label, released)
         except Exception as e:
-            print(f"  ⚠ ONS URL failed ({url[-50:]}: {e})")
+            print(f"  \u26a0 ONS URL failed ({url[-50:]}: {e})")
             continue
- 
-    # Fallback: hardcoded from ONS bulletin released 18 Feb 2026
-    # UK CPI Jan 2026 = 3.0% (ONS Consumer price inflation, UK: January 2026)
-    print(f"  ⚠ All ONS URLs failed — using hardcoded fallback (Jan 2026 = 3.0%)")
-    return _dp(3.0, datetime(2026, 1, 1), label, released)
- 
- 
-# ── Japan CPI: e-Stat API ─────────────────────────────────────
-# statsDataId 0003427113 = "CPI All Japan, 2020=100, All items (monthly)"
-# FRED JPNCPIALLMINMEI ended Jun 2021 — DO NOT USE.
-def get_japan_cpi(released=False):
-    label = "Japan CPI YoY %"
+
+    print(f"  \u2717 UK CPI: All ONS URLs failed -- no data available")
+    return _fail(label)
+
+
+# -- UK GDP YoY: ONS website JSON API --
+# KGQ5 (GDP YoY monthly %) is discontinued on ONS -- all pgdp/mgdp URLs 404.
+# Instead: fetch ECY2/mgdp (GVA monthly index, CVM SA) and compute YoY
+# manually by comparing the latest month to 12 months prior.
+def get_uk_gdp(released=False):
+    label = "UK GDP YoY %"
+    url = "https://www.ons.gov.uk/economy/grossdomesticproductgdp/timeseries/ecy2/mgdp/data"
+    try:
+        r = requests.get(url, timeout=10, headers={"Accept": "application/json"})
+        r.raise_for_status()
+        data = r.json()
+        months = data.get("months", [])
+        if len(months) < 13:
+            raise ValueError(f"Need 13+ months for YoY, got {len(months)}")
+        latest_val = float(months[-1]["value"])
+        prior_val  = float(months[-13]["value"])
+        yoy = round((latest_val / prior_val - 1) * 100, 2)
+        raw_date = months[-1].get("label", "")
+        dt = TODAY
+        for fmt in ("%Y %b", "%b %Y", "%Y-%m"):
+            try:
+                dt = datetime.strptime(raw_date, fmt)
+                break
+            except Exception:
+                pass
+        print(f"     UK GDP via ECY2 index: {prior_val} -> {latest_val} = {yoy}% YoY")
+        return _dp(yoy, dt, label, released)
+    except Exception as e:
+        print(f"  \u26a0 ONS GDP URL failed: {e}")
+
+    print(f"  \u2717 UK GDP: ONS ECY2/mgdp failed -- no data available")
+    return _fail(label)
+
+
+# -- BoJ Policy Rate: snap overnight call rate to nearest 0.25% --
+# IRSTCI01JPM156N is the overnight call rate, which trades slightly
+# below the BoJ's policy rate target.  Recent BoJ target rates:
+# -0.1%, 0%, 0.25%, 0.5%, 0.75% -- all multiples of 0.25%.
+# Snapping to nearest 0.25% recovers the correct policy target.
+def get_boj_rate(released=False):
+    label = "BoJ Policy Rate"
+    try:
+        s = fred.get_series("IRSTCI01JPM156N").dropna()
+        raw = round(float(s.iloc[-1]), 4)
+        snapped = round(round(raw / 0.25) * 0.25, 2)
+        print(f"     BoJ overnight call rate raw: {raw}% -> snapped to {snapped}%")
+        return _dp(snapped, s.index[-1], label, released)
+    except Exception as e:
+        print(f"  \u2717 {label}: Failed -- {e}")
+        return _fail(label)
+
+
+# -- Japan Unemployment: e-Stat API --
+# Table 0003005865 = Labor Force Survey
+# cdTab=02 (rate %), cdCat02=08 (unemployment rate), cdCat03=0 (total)
+def get_japan_unemployment_estat(released=False):
+    label = "Japan Unemployment"
+    estat_app_id = os.getenv("ESTAT_APP_ID", "guest")
     try:
         url = (
-            "https://api.e-stat.go.jp/rest/3.0/app/json/getStatsData"
-            "?appId=guest"
-            "&statsDataId=0003427113"
-            "&cdCat01=0000"
-            "&limit=25"
+            f"https://api.e-stat.go.jp/rest/3.0/app/json/getStatsData"
+            f"?appId={estat_app_id}"
+            f"&statsDataId=0003005865"
+            f"&cdTab=02"
+            f"&cdCat02=08"
+            f"&cdCat03=0"
+            f"&limit=500"
         )
         r = requests.get(url, timeout=15)
         r.raise_for_status()
         data = r.json()
- 
+
+        result = data.get("GET_STATS_DATA", {}).get("RESULT", {})
+        status = result.get("STATUS", 0)
+        if int(status) != 0:
+            msg = result.get("ERROR_MSG", "unknown error")
+            raise ValueError(f"e-Stat API error {status}: {msg}")
+
+        values = (
+            data.get("GET_STATS_DATA", {})
+                .get("STATISTICAL_DATA", {})
+                .get("DATA_INF", {})
+                .get("VALUE", [])
+        )
+        if not values:
+            raise ValueError("e-Stat returned empty VALUE array")
+
+        obs = {}
+        for v in values:
+            t = v.get("@time", "")
+            val = v.get("$", "")
+            if t and val:
+                try:
+                    obs[t] = float(val)
+                except ValueError:
+                    pass
+
+        if not obs:
+            raise ValueError("No numeric observations from e-Stat")
+
+        latest_key = sorted(obs.keys())[-1]
+        rate = round(obs[latest_key], 2)
+
+        try:
+            dt = datetime.strptime(latest_key, "%Y-%m")
+        except Exception:
+            dt = TODAY
+        print(f"    e-Stat unemployment: {rate}% ({dt.strftime('%b %Y')})")
+        return _dp(rate, dt, label, released)
+
+    except Exception as e:
+        print(f"  \u26a0 e-Stat unemployment failed: {e}")
+        print(f"    Falling back to FRED LRUNTTTTJPM156S...")
+        return get_latest("LRUNTTTTJPM156S", label, released)
+
+
+# -- Japan Trade Balance: exports minus imports from FRED --
+# No single FRED series provides Japan's trade balance directly.
+# XTEXVA01JPM667S = Exports of goods (OECD, USD, SA)
+# XTIMVA01JPM667S = Imports of goods (OECD, USD, SA)
+# Raw values are in USD (e.g. 60,926,820,000 = ~$60.9B).
+# Trade balance = exports - imports, divided by 1e9 -> billions USD.
+def get_japan_trade_balance(released=False):
+    label = "Japan Trade Balance"
+    try:
+        exports = fred.get_series("XTEXVA01JPM667S").dropna()
+        imports = fred.get_series("XTIMVA01JPM667S").dropna()
+
+        common_idx = exports.index.intersection(imports.index)
+        if len(common_idx) == 0:
+            raise ValueError("No overlapping dates between exports and imports series")
+
+        latest_date = common_idx[-1]
+        exp_val = float(exports.loc[latest_date])
+        imp_val = float(imports.loc[latest_date])
+        balance = round((exp_val - imp_val) / 1e9, 2)
+
+        print(f"     Japan trade: exports=${exp_val/1e9:.1f}B - imports=${imp_val/1e9:.1f}B = ${balance:.2f}B")
+        return _dp(balance, latest_date, label, released)
+    except Exception as e:
+        print(f"  \u2717 {label}: Failed -- {e}")
+        return _fail(label)
+
+
+# -- Japan CPI: e-Stat API with proper API key --
+# statsDataId 0003427113, cdTab=3 (YoY% directly), cdCat01=0001 (All items),
+# cdArea=00000 (All Japan). Uses ESTAT_APP_ID from .env.
+def get_japan_cpi(released=False):
+    label = "Japan CPI YoY %"
+    estat_app_id = os.getenv("ESTAT_APP_ID", "guest")
+    print(f"  Trying e-Stat API for Japan CPI...")
+    try:
+        url = (
+            f"https://api.e-stat.go.jp/rest/3.0/app/json/getStatsData"
+            f"?appId={estat_app_id}"
+            f"&statsDataId=0003427113"
+            f"&cdTab=3"
+            f"&cdCat01=0001"
+            f"&cdArea=00000"
+            f"&limit=5"
+        )
+        r = requests.get(url, timeout=15)
+        r.raise_for_status()
+        data = r.json()
+
+        result = data.get("GET_STATS_DATA", {}).get("RESULT", {})
+        status = result.get("STATUS", 0)
+        if int(status) != 0:
+            msg = result.get("ERROR_MSG", "unknown error")
+            raise ValueError(f"e-Stat API error {status}: {msg}")
+
         values = (
             data.get("GET_STATS_DATA", {})
                 .get("STATISTICAL_DATA", {})
@@ -230,7 +389,7 @@ def get_japan_cpi(released=False):
         )
         if not values:
             raise ValueError("Empty e-Stat response")
- 
+
         obs = {}
         for v in values:
             t   = v.get("@time", "")
@@ -240,43 +399,32 @@ def get_japan_cpi(released=False):
                     obs[t] = float(val)
                 except ValueError:
                     pass
- 
+
         if not obs:
             raise ValueError("No usable observations in e-Stat response")
- 
-        sorted_keys = sorted(obs.keys())
-        latest_key  = sorted_keys[-1]
-        latest_val  = obs[latest_key]
- 
-        year  = int(latest_key[:4])
-        month = latest_key[4:]
-        prior_key = f"{year - 1}{month}"
- 
-        if prior_key not in obs:
-            raise ValueError(f"Prior-year key {prior_key} not in data")
- 
-        yoy = round((latest_val / obs[prior_key] - 1) * 100, 2)
+
+        latest_key = sorted(obs.keys())[-1]
+        yoy = round(obs[latest_key], 2)
+
+        # Extract date: "2025000303" -> year=2025, month=03
+        year_str  = latest_key[:4]
+        month_str = latest_key[4:6]
+        if month_str == "00":
+            month_str = latest_key[6:8]
         try:
-            dt = datetime.strptime(latest_key, "%Y%m")
+            dt = datetime.strptime(f"{year_str}{month_str}", "%Y%m")
         except Exception:
             dt = TODAY
+        print(f"    e-Stat: success -- {yoy}% ({dt.strftime('%b %Y')})")
         return _dp(yoy, dt, label, released)
- 
+
     except Exception as e:
-        print(f"  ⚠ e-Stat API failed ({e}), using hardcoded fallback")
-        # Japan Stats Bureau released Jan 2026 CPI on 21 Feb 2026: 1.5% YoY
-        return _dp(1.5, datetime(2026, 1, 1), label, released)
- 
- 
-# ── EZ Unemployment: Eurostat JSON API ───────────────────────
-# FRED has no live series. Eurostat provides a free JSON-stat REST API.
-# Response structure (JSON-stat):
-#   data["id"]        = ["freq","unit","age","sex","geo","time"]  (dimension order)
-#   data["size"]      = [1, 1, 1, 1, 1, 3]                       (positions per dim)
-#   data["value"]     = {"0": 6.3, "1": 6.2, "2": 6.1}          (flat index → value)
-#   data["dimension"]["time"]["category"]["index"] = {"2025-11":0,"2025-12":1,"2026-01":2}
-# Flat index = sum of (dim_position × stride), with stride = product of later dim sizes.
-# Since all non-time dims are filtered to 1, flat_index == time_position.
+        print(f"  \u2717 Japan CPI: e-Stat API failed ({e})")
+        print(f"    -> Set ESTAT_APP_ID env var for reliable access")
+        return _fail(label)
+
+
+# -- EZ Unemployment: Eurostat JSON API --
 def get_ez_unemployment(released=False):
     label = "Eurozone Unemployment %"
     try:
@@ -287,67 +435,72 @@ def get_ez_unemployment(released=False):
         r = requests.get(url, timeout=10)
         r.raise_for_status()
         data = r.json()
- 
-        # JSON-stat: values keyed by flat string integer index
+
         values = data.get("value", {})
         if not values:
             raise ValueError(f"No value field in response. Keys: {list(data.keys())}")
- 
-        # The "id" array gives the dimension order; time is always the last one
+
         dim_ids   = data.get("id", [])
-        time_key  = dim_ids[-1] if dim_ids else "time"   # e.g. "time" or "TIME_PERIOD"
+        time_key  = dim_ids[-1] if dim_ids else "time"
         dim_sizes = data.get("size", [])
- 
-        # Get time dimension category index: {"2025-11": 0, "2025-12": 1, "2026-01": 2}
+
         time_cat_index = (
             data.get("dimension", {})
                 .get(time_key, {})
                 .get("category", {})
                 .get("index", {})
         )
- 
+
         if not time_cat_index:
             raise ValueError(
                 f"No time category index found. dim_ids={dim_ids}, "
                 f"dimension keys={list(data.get('dimension', {}).keys())}"
             )
- 
-        # Find the time period with the highest position index → most recent
+
         latest_period = max(time_cat_index, key=lambda k: time_cat_index[k])
-        latest_pos    = time_cat_index[latest_period]  # position within time dimension
- 
-        # Compute flat index: stride for time dimension = product of sizes of later dims
-        # Since time is last, stride = 1. flat_index = (other dims all pos 0) * their strides + latest_pos
-        # With all non-time dims filtered to 1 value, flat_index == latest_pos.
+        latest_pos    = time_cat_index[latest_period]
+
         time_stride = 1
-        for sz in dim_sizes[len(dim_ids):]:   # dims after time (none) — just future-proofing
+        for sz in dim_sizes[len(dim_ids):]:
             time_stride *= sz
         flat_index = latest_pos * time_stride
- 
+
         val = values.get(str(flat_index)) or values.get(flat_index)
         if val is None:
-            # Try iterating all value keys to find the last one as a fallback
             all_vals = {int(k): v for k, v in values.items() if v is not None}
             if all_vals:
                 val = all_vals[max(all_vals.keys())]
             else:
                 raise ValueError(f"No value at flat index {flat_index}. Values: {values}")
- 
+
         try:
             dt = datetime.strptime(latest_period, "%Y-%m")
         except Exception:
             dt = TODAY
         return _dp(round(float(val), 2), dt, label, released)
- 
+
     except Exception as e:
-        print(f"  ⚠ Eurostat API failed ({e})")
-        # Hardcoded: Eurostat press release 4 Mar 2026 — EA21 Jan 2026 = 6.1%
-        return _dp(6.1, datetime(2026, 1, 1), label, released)
- 
- 
-# ── US Macro ──────────────────────────────────────────────────
+        print(f"  \u2717 EZ Unemployment: Eurostat API failed ({e})")
+        return _fail(label)
+
+
+# -- BoE Rate: SONIA snapped to nearest 0.25% --
+def get_boe_rate(released=False):
+    label = "BoE Bank Rate"
+    try:
+        s = fred.get_series("IUDSOIA").dropna()
+        raw = float(s.iloc[-1])
+        snapped = round(round(raw / 0.25) * 0.25, 2)
+        print(f"     BoE SONIA raw: {raw}% -> snapped to {snapped}%")
+        return _dp(snapped, s.index[-1], label, released)
+    except Exception as e:
+        print(f"  \u2717 {label}: Failed -- {e}")
+        return _fail(label)
+
+
+# -- US Macro --
 def fetch_us_macro(released):
-    print("\n🇺🇸  Fetching US Macro Data...")
+    print("\n\U0001f1fa\U0001f1f8  Fetching US Macro Data...")
     us = {
         "fed_funds_rate":        get_latest("DFEDTARU",        "Fed Funds Rate",            released=("fed_funds_rate"        in released)),
         "yield_10yr":            get_latest("DGS10",           "10yr Treasury Yield",       released=False),
@@ -356,66 +509,66 @@ def fetch_us_macro(released):
         "core_pce":              get_yoy_change("PCEPILFE",    "Core PCE YoY %",            released=("core_pce"              in released)),
         "unemployment":          get_latest("UNRATE",          "Unemployment Rate",         released=("unemployment"          in released)),
         "nonfarm_payrolls":      get_monthly_change("PAYEMS",  "NFP Monthly Change (000s)", released=("nonfarm_payrolls"      in released)),
-        "gdp_growth":            get_latest("A191RL1Q225SBEA", "GDP Growth QoQ %",          released=("gdp_growth"            in released)),
+        "gdp_growth":            _quarter_date(get_latest("A191RL1Q225SBEA", "US GDP annualised rate -- THIS VALUE IS ALREADY ANNUALISED. Write ONLY as: the economy grew at an annualised rate of X%. NEVER say quarter-over-quarter. NEVER multiply by 4.", released=("gdp_growth" in released))),
         "industrial_production": get_latest("INDPRO",          "Industrial Production",     released=("industrial_production" in released)),
         "capacity_utilization":  get_latest("TCU",             "Capacity Utilization %",    released=("capacity_utilization"  in released)),
     }
     try:
         spread = round(us["yield_10yr"]["value"] - us["yield_2yr"]["value"], 3)
-        status = "Normal" if spread > 0 else "INVERTED ⚠"
-        print(f"     Yield Spread: {spread}% — {status}")
+        status = "Normal" if spread > 0 else "INVERTED \u26a0"
+        print(f"     Yield Spread: {spread}% -- {status}")
     except Exception:
         spread = None
     us["yield_spread"] = {"value": spread, "date": TODAY.strftime("%b %Y"), "released_this_week": False}
     return us
- 
- 
-# ── Europe Macro ──────────────────────────────────────────────
+
+
+# -- Europe Macro --
 def fetch_europe_macro(released):
-    print("\n🇪🇺  Fetching Europe Macro Data...")
+    print("\n\U0001f1ea\U0001f1fa  Fetching Europe Macro Data...")
     return {
         "ecb_rate":        get_latest("ECBDFR",                  "ECB Deposit Rate",        released=("ecb_rate"        in released)),
-        "boe_rate":        get_latest("IUDSOIA",                 "BoE Bank Rate",            released=("boe_rate"        in released)),
+        "boe_rate":        get_boe_rate(released=("boe_rate" in released)),
         "ez_cpi":          get_yoy_manual("CP0000EZ19M086NEST",  "Eurozone CPI YoY %",      released=("ez_cpi"          in released)),
-        "ez_gdp_growth":   get_yoy_change("CLVMNACSCAB1GQEA19", "Eurozone GDP YoY %",       released=("ez_gdp_growth"   in released)),
-        "ez_unemployment": get_ez_unemployment(                   released=("ez_unemployment" in released)),
-        "uk_cpi":          get_uk_cpi(                            released=("uk_cpi"          in released)),
-        "uk_gdp_growth":   get_yoy_change("NGDPRSAXDCGBQ",      "UK GDP YoY %",             released=("uk_gdp_growth"   in released)),
+        "ez_gdp_growth":   _quarter_date(get_yoy_change("CLVMNACSCAB1GQEA19", "Eurozone GDP YoY %", released=("ez_gdp_growth" in released))),
+        "ez_unemployment": get_ez_unemployment(released=("ez_unemployment" in released)),
+        "uk_cpi":          get_uk_cpi(released=("uk_cpi" in released)),
+        "uk_gdp_growth":   get_uk_gdp(released=("uk_gdp_growth" in released)),
         "uk_unemployment": get_latest("LRHUTTTTGBM156S",         "UK Unemployment",          released=("uk_unemployment" in released)),
         "uk_debt_gdp":     get_latest("DEBTTLGBA188A",           "UK Debt to GDP %",         released=False),
     }
- 
- 
-# ── Japan Macro ───────────────────────────────────────────────
+
+
+# -- Japan Macro --
 def fetch_japan_macro(released):
-    print("\n🇯🇵  Fetching Japan Macro Data...")
+    print("\n\U0001f1ef\U0001f1f5  Fetching Japan Macro Data...")
     return {
-        "boj_rate":           get_latest("IRSTCI01JPM156N",          "BoJ Policy Rate",      released=("boj_rate"           in released)),
-        "japan_cpi":          get_japan_cpi(                          released=("japan_cpi"          in released)),
-        "japan_gdp_growth":   get_yoy_change("JPNRGDPEXP",           "Japan GDP YoY %",      released=("japan_gdp_growth"   in released)),
-        "japan_trade":        get_monthly_change("XTIMVA01JPM667S",  "Japan Trade Balance",  released=("japan_trade"        in released), divisor=1e9),
-        "japan_unemployment": get_latest("LRUNTTTTJPM156S",          "Japan Unemployment",   released=("japan_unemployment" in released)),
+        "boj_rate":           get_boj_rate(released=("boj_rate" in released)),
+        "japan_cpi":          get_japan_cpi(released=("japan_cpi" in released)),
+        "japan_gdp_growth":   _quarter_date(get_yoy_change("JPNRGDPEXP", "Japan GDP YoY %", released=("japan_gdp_growth" in released))),
+        "japan_trade":        get_japan_trade_balance(released=("japan_trade" in released)),
+        "japan_unemployment": get_japan_unemployment_estat(released=("japan_unemployment" in released)),
     }
- 
- 
-# ── Master fetch ──────────────────────────────────────────────
+
+
+# -- Master fetch --
 def fetch_all_macro(ff_this_week=None):
     if ff_this_week is None:
         ff_this_week = get_this_week_events()
- 
-    print("\n📋  Verifying this week's releases against ForexFactory...")
+
+    print("\n\U0001f4cb  Verifying this week's releases against ForexFactory...")
     released = _build_released_set(ff_this_week)
     if not released:
-        print("     No matching FF events found — no FRED series flagged.")
- 
+        print("     No matching FF events found -- no FRED series flagged.")
+
     return {
         "us": fetch_us_macro(released),
         "eu": fetch_europe_macro(released),
         "jp": fetch_japan_macro(released),
     }
- 
- 
-# ── This week's releases for Claude prompts ───────────────────
+
+
+# -- This week's releases for Claude prompts --
 def get_this_weeks_releases(macro):
     LABELS = {
         "fed_funds_rate": "Fed Funds Rate", "cpi_yoy": "US CPI YoY",
@@ -444,14 +597,14 @@ def get_this_weeks_releases(macro):
         "japan_cpi": "%", "japan_gdp_growth": "%", "japan_trade": "bn",
         "japan_unemployment": "%",
     }
- 
+
     def _fmt(key, dp):
         if not dp or dp.get("value") is None:
             return None
         v    = dp["value"]
         sign = "+" if isinstance(v, (float, int)) and v > 0 else ""
         return f"{LABELS.get(key, key)}: {sign}{v}{UNITS.get(key, '')} ({dp.get('date', '')})"
- 
+
     us_r, eu_r, jp_r = [], [], []
     for key, dp in macro["us"].items():
         if dp and dp.get("released_this_week"):
@@ -465,32 +618,32 @@ def get_this_weeks_releases(macro):
         if dp and dp.get("released_this_week"):
             l = _fmt(key, dp)
             if l: jp_r.append(l)
- 
+
     return {"us": us_r, "eu": eu_r, "jp": jp_r, "any": bool(us_r or eu_r or jp_r)}
- 
- 
-# ── Convenience extractor ─────────────────────────────────────
+
+
+# -- Convenience extractor --
 def val(datapoint):
     return datapoint.get("value") if datapoint else None
- 
- 
-# ── Main ──────────────────────────────────────────────────────
+
+
+# -- Main --
 if __name__ == "__main__":
     import logging
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
- 
+
     macro = fetch_all_macro()
- 
+
     print("\n" + "=" * 55)
     print(" MACRO DATA SUMMARY")
     print("=" * 55)
-    for region, label in [("us", "🇺🇸  US"), ("eu", "🇪🇺  Europe"), ("jp", "🇯🇵  Japan")]:
+    for region, label in [("us", "\U0001f1fa\U0001f1f8  US"), ("eu", "\U0001f1ea\U0001f1fa  Europe"), ("jp", "\U0001f1ef\U0001f1f5  Japan")]:
         print(f"\n{label}:")
         for k, dp in macro[region].items():
             if isinstance(dp, dict):
-                flag = "🆕" if dp.get("released_this_week") else "  "
+                flag = "\U0001f195" if dp.get("released_this_week") else "  "
                 print(f"  {flag} {k:25} {dp.get('value')}  ({dp.get('date')})")
- 
+
     print("\n" + "=" * 55)
     print(" THIS WEEK'S VERIFIED RELEASES")
     print("=" * 55)
@@ -498,8 +651,8 @@ if __name__ == "__main__":
     if not releases["any"]:
         print("\n  Nothing verified as released this week.")
     else:
-        for region, label in [("us", "🇺🇸  US"), ("eu", "🇪🇺  Europe"), ("jp", "🇯🇵  Japan")]:
+        for region, label in [("us", "\U0001f1fa\U0001f1f8  US"), ("eu", "\U0001f1ea\U0001f1fa  Europe"), ("jp", "\U0001f1ef\U0001f1f5  Japan")]:
             if releases[region]:
                 print(f"\n{label}:")
                 for line in releases[region]:
-                    print(f"  • {line}")
+                    print(f"  \u2022 {line}")

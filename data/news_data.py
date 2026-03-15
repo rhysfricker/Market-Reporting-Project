@@ -45,7 +45,13 @@ FEEDS = {
     # ── Energy & Commodities Supply/Demand ───────────────────
     # CNBC Energy — OPEC cuts, oil supply shocks, shipping disruptions
     "Energy":         ("https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=10000664", MAX_HEADLINES_DEFAULT),
- 
+
+    # ── Oil & Commodities / Middle East ────────────────────────
+    # Reuters business news for oil/commodities context;
+    # BBC Middle East for war/conflict headlines that drive oil prices
+    "Oil & Commodities": ("https://oilprice.com/rss/main",                                   MAX_HEADLINES_GEOPOLITICAL),
+    "Middle East":       ("https://feeds.bbci.co.uk/news/world/middle_east/rss.xml",         MAX_HEADLINES_GEOPOLITICAL),
+
     # ── Earnings ─────────────────────────────────────────────
     # CNBC Earnings — company results that move equity indices
     "Earnings":       ("https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839069", MAX_HEADLINES_DEFAULT),
@@ -65,7 +71,7 @@ SECTION_FEEDS = {
     "us":            ["Markets", "US Economy", "Business", "Earnings"],
     "europe":        ["Europe Markets", "World Business", "Business"],
     "japan":         ["Asia Markets"],
-    "commodities":   ["Energy", "World Business"],
+    "commodities":   ["Energy", "World Business", "Middle East", "Oil & Commodities"],
     "currencies":    ["Central Banks", "Markets"],
     "earnings":      ["Earnings", "Business"],
 }
@@ -115,12 +121,17 @@ def parse_feed(category, url, max_items=200):
             if dt is not None and dt < cutoff:
                 continue
  
+            # Tag as weekday (Mon-Fri) or weekend (Sat-Sun)
+            # Weekday headlines can explain market moves; weekend ones are forward context only
+            is_weekend = dt.weekday() >= 5 if dt is not None else False
+
             headlines.append({
                 "category": category,
                 "title":    title,
                 "date":     date_str,
                 "dt":       dt,   # kept for sorting; not used in prompts
                 "link":     link,
+                "is_weekend": is_weekend,
             })
  
         print(f"  ✓ {category}: {len(headlines)} headlines (last 7 days)")
@@ -189,23 +200,43 @@ def get_section_headlines(all_news, section, limit=20):
                 specific.append(h)
  
     # Sort each group newest-first, then combine
-    geo.sort(key=sort_key, reverse=True)
-    specific.sort(key=sort_key, reverse=True)
- 
-    return (geo + specific)[:limit]
+    # Sort: weekday headlines first (they drove market moves),
+    # then weekend headlines (forward context only). Newest-first within each.
+    all_hl = geo + specific
+    weekday_hl = [h for h in all_hl if not h.get("is_weekend", False)]
+    weekend_hl = [h for h in all_hl if h.get("is_weekend", False)]
+    weekday_hl.sort(key=sort_key, reverse=True)
+    weekend_hl.sort(key=sort_key, reverse=True)
+
+    return (weekday_hl + weekend_hl)[:limit]
  
  
 # ── Format Headlines for a Prompt ────────────────────────────
 # Returns a plain-text bullet list ready to paste into a prompt.
-# Includes the feed category so Claude knows the source context.
+# Headlines are split into WEEKDAY (Mon-Fri, when markets were open)
+# and WEEKEND (Sat-Sun, after market close) so the AI knows which
+# headlines could have driven market moves vs. which are forward context.
 def format_section_headlines(all_news, section, limit=12):
     headlines = get_section_headlines(all_news, section, limit=limit)
     if not headlines:
         return "No headlines available."
+
+    weekday = [h for h in headlines if not h.get("is_weekend", False)]
+    weekend = [h for h in headlines if h.get("is_weekend", False)]
+
     lines = []
-    for h in headlines:
-        lines.append(f"[{h['category']}] {h['title']}")
-    return "\n".join(f"- {l}" for l in lines)
+    if weekday:
+        lines.append("WEEKDAY HEADLINES (Mon-Fri, markets open — these drove this week's moves):")
+        for h in weekday:
+            lines.append(f"- [{h['category']}] {h['title']}")
+    if weekend:
+        if weekday:
+            lines.append("")
+        lines.append("WEEKEND HEADLINES (Sat-Sun, after market close — context only, did NOT cause this week's moves):")
+        for h in weekend:
+            lines.append(f"- [{h['category']}] {h['title']}")
+
+    return "\n".join(lines)
  
  
 # ── Helper: Get Top Headlines Across All Categories ──────────
